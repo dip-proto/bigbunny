@@ -1,0 +1,4 @@
+github.com/jedisct1/go-aes-siv v1.0.0 h1:1LUqYiKEvQhv1Pmwgi5DQMPPFxqT0cWmMPnzCNVYCO8=
+github.com/jedisct1/go-aes-siv v1.0.0/go.mod h1:Vugw21e5SVYJkUjKdP+Qqeqv3Dw6+0cBe8wPvVUSBIE=
+golang.org/x/crypto v0.46.0 h1:cKRW/pmt1pKAfetfu+RCEvjvZkA9RimPbh7bhFjGVBU=
+golang.org/x/crypto v0.46.0/go.mod h1:Evb/oLKmMraqjZ2iQTwDwvCtJkczlDuTmdJXoZVzqU0=

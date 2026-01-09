@@ -1,0 +1,114 @@
+package routing
+
+import (
+	"crypto/sha256"
+	"encoding/binary"
+	"sort"
+)
+
+// Host represents a node in the cluster.
+type Host struct {
+	ID      string
+	Address string // host:port for intra-PoP communication
+	Healthy bool
+}
+
+// ReplicaSet contains the primary and secondary hosts for a given shard.
+type ReplicaSet struct {
+	Primary   *Host
+	Secondary *Host
+	ShardID   string
+}
+
+// RendezvousHasher implements rendezvous (highest random weight) hashing
+// for deterministic shard-to-host mapping. All nodes compute the same
+// placement without coordination.
+type RendezvousHasher struct {
+	hosts []*Host
+}
+
+// NewRendezvousHasher creates a hasher with the given host list.
+func NewRendezvousHasher(hosts []*Host) *RendezvousHasher {
+	return &RendezvousHasher{hosts: hosts}
+}
+
+// UpdateHosts replaces the host list.
+func (r *RendezvousHasher) UpdateHosts(hosts []*Host) {
+	r.hosts = hosts
+}
+
+// GetReplicaSet returns the primary and secondary hosts for a shard.
+// Uses rendezvous hashing: each host is scored by hash(shardID, hostID),
+// and the two highest-scoring healthy hosts become primary and secondary.
+func (r *RendezvousHasher) GetReplicaSet(shardID string) *ReplicaSet {
+	if len(r.hosts) == 0 {
+		return nil
+	}
+
+	type scored struct {
+		host  *Host
+		score uint64
+	}
+
+	scores := make([]scored, 0, len(r.hosts))
+	for _, h := range r.hosts {
+		scores = append(scores, scored{
+			host:  h,
+			score: r.hash(shardID, h.ID),
+		})
+	}
+
+	sort.Slice(scores, func(i, j int) bool {
+		return scores[i].score > scores[j].score
+	})
+
+	rs := &ReplicaSet{ShardID: shardID}
+
+	// Primary: highest scoring healthy host
+	for _, s := range scores {
+		if s.host.Healthy {
+			rs.Primary = s.host
+			break
+		}
+	}
+
+	// Secondary: next highest scoring healthy host (different from primary)
+	for _, s := range scores {
+		if s.host.Healthy && (rs.Primary == nil || s.host.ID != rs.Primary.ID) {
+			rs.Secondary = s.host
+			break
+		}
+	}
+
+	// Fallback: if no healthy hosts, use unhealthy ones
+	if rs.Primary == nil && len(scores) > 0 {
+		rs.Primary = scores[0].host
+	}
+	if rs.Secondary == nil && len(scores) > 1 {
+		rs.Secondary = scores[1].host
+	}
+
+	return rs
+}
+
+func (r *RendezvousHasher) hash(shardID, hostID string) uint64 {
+	h := sha256.New()
+	h.Write([]byte(shardID))
+	h.Write([]byte(hostID))
+	sum := h.Sum(nil)
+	return binary.BigEndian.Uint64(sum[:8])
+}
+
+func (r *RendezvousHasher) GetAllHosts() []*Host {
+	return r.hosts
+}
+
+func (r *RendezvousHasher) GetHealthyHosts() []*Host {
+	healthy := make([]*Host, 0)
+	for _, h := range r.hosts {
+		if h.Healthy {
+			healthy = append(healthy, h)
+		}
+	}
+	return healthy
+}

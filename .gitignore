@@ -4,3 +4,4 @@ cmd/bbd/bbd
 bbd
 LOG.md
 tmp
+.grepai/
