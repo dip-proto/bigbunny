@@ -183,7 +183,6 @@ func main() {
 	apiCfg := &api.Config{
 		Site:          *site,
 		HostID:        *hostID,
-		TCPAddress:    *tcpAddr,
 		DefaultTTL:    14 * 24 * time.Hour,
 		MaxBodySize:   2 * 1024,
 		ModifyTimeout: 500 * time.Millisecond,

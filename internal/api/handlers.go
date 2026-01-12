@@ -27,7 +27,6 @@ type Server struct {
 type Config struct {
 	Site          string
 	HostID        string
-	TCPAddress    string // TCP address of this node (for self-forwarding detection)
 	DefaultTTL    time.Duration
 	MaxBodySize   int64
 	ModifyTimeout time.Duration
@@ -183,16 +182,9 @@ func (s *Server) requirePrimary(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 
-	// Safety check: don't forward to self
-	// Compare addresses - if leader address matches our address, handle locally
-	// Note: This is a defensive check; shouldn't happen in normal operation
-	if leaderAddr == s.config.TCPAddress {
-		// Log error but handle locally to avoid loop
-		// In practice, this means role and leader tracking are out of sync
-		return true
-	}
-
 	// Forward to leader
+	// Note: X-BB-No-Forward header prevents infinite loops if we somehow
+	// forward to ourselves (would indicate a bug in leader tracking)
 	s.forwardToLeader(w, r, leaderAddr)
 	return false // Signal: don't handle locally, already forwarded
 }
