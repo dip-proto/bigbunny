@@ -52,6 +52,7 @@ For a complete walkthrough, see the [Quick Start Guide](doc/quickstart.md).
 - **Encrypted Store IDs** — AES-128-SIV encryption provides security and customer isolation
 - **Named Stores** — Optional human-readable names instead of opaque IDs
 - **TTL Management** — Automatic expiration and garbage collection
+- **Per-Customer Rate Limiting** — Token bucket algorithm prevents resource exhaustion
 - **Unix Socket API** — Local access with filesystem-based permission control
 
 ## Architecture Overview
@@ -101,7 +102,8 @@ TOKEN=$(openssl rand -hex 16)
   --store-keys="0:$KEY" --store-key-current=0 \
   --routing-secret="$ROUTING_SECRET" \
   --internal-token="$TOKEN" \
-  --memory-limit=4294967296
+  --memory-limit=4294967296 \
+  --rate-limit=100 --burst-size=200
 
 # Node 2 (becomes secondary)
 ./bbd --host-id=node2 --tcp=:8082 --uds=/var/run/bbd/bbd.sock \
@@ -109,7 +111,8 @@ TOKEN=$(openssl rand -hex 16)
   --store-keys="0:$KEY" --store-key-current=0 \
   --routing-secret="$ROUTING_SECRET" \
   --internal-token="$TOKEN" \
-  --memory-limit=4294967296
+  --memory-limit=4294967296 \
+  --rate-limit=100 --burst-size=200
 ```
 
 The [Installation Guide](doc/installation.md) covers building from source, managing secrets, and configuring systemd. The [Operations Guide](doc/operations.md) explains monitoring, capacity planning, and troubleshooting.
@@ -191,15 +194,17 @@ These trade-offs make Big Bunny fast and simple to operate. If you need durabili
 
 ## Performance
 
-| Metric          | Value   | Notes                       |
-| --------------- | ------- | --------------------------- |
-| Write latency   | ~100μs  | Local operation only        |
-| Read latency    | ~50μs   | No lock acquisition         |
-| Failover time   | ~4s     | Lease + grace period        |
-| Max store size  | 2KB     | Configurable limit          |
-| Default TTL     | 14 days | Configurable per store      |
-| Lock timeout    | 500ms   | Fixed for modify operations |
-| Replication lag | <100ms  | Typical under normal load   |
+| Metric           | Value   | Notes                            |
+| ---------------- | ------- | -------------------------------- |
+| Write latency    | ~100μs  | Local operation only             |
+| Read latency     | ~50μs   | No lock acquisition              |
+| Failover time    | ~4s     | Lease + grace period             |
+| Max store size   | 2KB     | Configurable limit               |
+| Default TTL      | 14 days | Configurable per store           |
+| Lock timeout     | 500ms   | Fixed for modify operations      |
+| Replication lag  | <100ms  | Typical under normal load        |
+| Rate limit       | 100/s   | Per customer (default, tunable)  |
+| Burst capacity   | 200     | Per customer (default, tunable)  |
 
 ## Security
 

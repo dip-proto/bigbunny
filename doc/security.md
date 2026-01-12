@@ -121,24 +121,24 @@ Let's walk through various attack scenarios and see how Big Bunny handles them.
 
 **Targeted host overload**: An attacker tries to force all their stores onto a single victim host to exhaust its resources. For anonymous stores, the attacker could create many stores and use timing/network analysis to identify which host served each request, keeping only stores on the target host. For named stores, this is more dangerous: the attacker could pre-compute customerID:name combinations that hash to the victim host and create stores with those exact names. The routing secret prevents both attacks. Without knowing the secret, offline pre-computation is impossible, and online trial-and-error becomes detectable and rate-limitable.
 
-**Denial of service**: An attacker floods with requests to exhaust resources. Big Bunny has some protections. Memory limits prevent unbounded memory consumption. Lock timeouts prevent indefinite locking. Per-store serialization limits the blast radius. The routing secret prevents targeted attacks where all traffic goes to one host. But fundamentally, if someone sends millions of requests per second distributed across all hosts, they can overwhelm any system. The real defense is rate limiting at the load balancer or network layer, not in Big Bunny itself.
+**Denial of service**: An attacker floods with requests to exhaust resources. Big Bunny has multiple layers of protection. Per-customer rate limiting enforces request limits (default: 100 req/s per customer with 200 burst capacity), preventing any single customer from overwhelming the system. Memory limits prevent unbounded memory consumption. Lock timeouts prevent indefinite locking. Per-store serialization limits the blast radius. The routing secret prevents targeted attacks where all traffic goes to one host. Rate limiting is configurable via `--rate-limit` and `--burst-size` flags and can be disabled entirely if running in a trusted environment. For distributed denial of service attacks spanning multiple customers, additional protection at the load balancer or network layer remains advisable.
 
 **Information leakage**: An attacker tries to infer information from store IDs or error messages. Store ID length reveals the site name length, which is minor. Deterministic encryption means identical plaintexts produce identical ciphertexts, but the unique identifier in each store ID prevents this from being useful. Error messages are generic—both invalid store IDs and wrong-customer IDs return "400 Bad Request" without details. Timing attacks are theoretically possible, but AES-SIV is implemented in constant time in the crypto libraries Big Bunny uses.
 
 Here's a summary of the risk levels:
 
-| Attack                 | Risk     | Protected?                      |
-| ---------------------- | -------- | ------------------------------- |
-| Store ID forgery       | None     | Yes (AES-SIV authentication)    |
-| Store ID tampering     | None     | Yes (SIV tag + AAD)             |
-| Cross-customer access  | None     | Yes (per-customer keys + AAD)   |
-| Within-customer replay | Low      | Partial (by design for retries) |
-| Cross-customer replay  | None     | Yes (key derivation + AAD)      |
-| Targeted host overload | None     | Yes (routing secret)            |
-| Replication injection  | Moderate | Partial (token, but plaintext)  |
-| Man-in-the-middle      | Moderate | No (plaintext currently)        |
-| Denial of service      | Moderate | Partial (resource + routing)    |
-| Information leakage    | Low      | Yes (minimal leakage)           |
+| Attack                 | Risk     | Protected?                       |
+| ---------------------- | -------- | -------------------------------- |
+| Store ID forgery       | None     | Yes (AES-SIV authentication)     |
+| Store ID tampering     | None     | Yes (SIV tag + AAD)              |
+| Cross-customer access  | None     | Yes (per-customer keys + AAD)    |
+| Within-customer replay | Low      | Partial (by design for retries)  |
+| Cross-customer replay  | None     | Yes (key derivation + AAD)       |
+| Targeted host overload | None     | Yes (routing secret)             |
+| Replication injection  | Moderate | Partial (token, but plaintext)   |
+| Man-in-the-middle      | Moderate | No (plaintext currently)         |
+| Denial of service      | Low      | Yes (per-customer rate limiting) |
+| Information leakage    | Low      | Yes (minimal leakage)            |
 
 ## Best Practices for Deployment
 
@@ -198,15 +198,13 @@ There's no mechanism for secure deletion (zeroing memory). Big Bunny relies on t
 
 Several security enhancements would make sense for production deployments beyond the PoC.
 
-mTLS for internal endpoints would encrypt replication traffic and verify peer identities. Nodes would exchange certificates during the TLS handshake and verify them against a trusted CA. This prevents eavesdropping and man-in-the-middle attacks on replication traffic.
+**mTLS for internal endpoints** would encrypt replication traffic and verify peer identities. Nodes would exchange certificates during the TLS handshake and verify them against a trusted CA. This prevents eavesdropping and man-in-the-middle attacks on replication traffic.
 
-Per-customer resource quotas would limit the blast radius of abuse. You could restrict each customer to a maximum number of stores, maximum memory usage, or maximum operation rate. This prevents one customer from consuming all resources and impacting others.
+**Per-customer resource quotas** would limit the blast radius of abuse. You could restrict each customer to a maximum number of stores or maximum memory usage (beyond the global memory limit). This prevents one customer from consuming all resources and impacting others.
 
-Enhanced audit logging would provide better visibility into what's happening. Structured logging with customer IDs, operation types, store IDs (hashed for privacy), timestamps, and outcomes would feed into SIEM systems for security analysis.
+**Enhanced audit logging** would provide better visibility into what's happening. Structured logging with customer IDs, operation types, store IDs (hashed for privacy), timestamps, and outcomes would feed into SIEM systems for security analysis.
 
-Rate limiting per customer would prevent abuse and denial of service. Track creates, modifies, and deletes per customer per time window, and reject requests exceeding the limit. This protects the system from both malicious and buggy clients.
-
-Certificate pinning for mTLS would prevent rogue certificate authorities from issuing valid certificates for your nodes. Pin the expected certificate fingerprints in configuration and reject connections with unexpected certificates, even if they're signed by a trusted CA.
+**Certificate pinning for mTLS** would prevent rogue certificate authorities from issuing valid certificates for your nodes. Pin the expected certificate fingerprints in configuration and reject connections with unexpected certificates, even if they're signed by a trusted CA.
 
 ## Getting Help with Security
 

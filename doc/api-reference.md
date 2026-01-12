@@ -28,19 +28,19 @@ The customer ID needs to be 1-64 characters, using alphanumeric characters plus 
 
 All public endpoints live under `/api/v1/`. Here's the complete list at a glance:
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/v1/create` | Create anonymous store |
-| POST | `/api/v1/create-by-name/{name}` | Create named store |
-| POST | `/api/v1/snapshot/{store-id}` | Read store contents |
-| POST | `/api/v1/begin-modify/{store-id}` | Acquire lock, get contents |
-| POST | `/api/v1/complete-modify/{store-id}` | Update store, release lock |
-| POST | `/api/v1/cancel-modify/{store-id}` | Release lock without update |
-| POST | `/api/v1/update/{store-id}` | One-shot update (auto-lock) |
-| POST | `/api/v1/delete/{store-id}` | Delete store |
-| POST | `/api/v1/delete-by-name/{name}` | Delete named store |
-| POST | `/api/v1/lookup-id-by-name/{name}` | Get store ID for name |
-| GET | `/status` | Node status (JSON) |
+| Method | Endpoint                             | Description                 |
+| ------ | ------------------------------------ | --------------------------- |
+| POST   | `/api/v1/create`                     | Create anonymous store      |
+| POST   | `/api/v1/create-by-name/{name}`      | Create named store          |
+| POST   | `/api/v1/snapshot/{store-id}`        | Read store contents         |
+| POST   | `/api/v1/begin-modify/{store-id}`    | Acquire lock, get contents  |
+| POST   | `/api/v1/complete-modify/{store-id}` | Update store, release lock  |
+| POST   | `/api/v1/cancel-modify/{store-id}`   | Release lock without update |
+| POST   | `/api/v1/update/{store-id}`          | One-shot update (auto-lock) |
+| POST   | `/api/v1/delete/{store-id}`          | Delete store                |
+| POST   | `/api/v1/delete-by-name/{name}`      | Delete named store          |
+| POST   | `/api/v1/lookup-id-by-name/{name}`   | Get store ID for name       |
+| GET    | `/status`                            | Node status (JSON)          |
 
 Let's walk through each operation in detail.
 
@@ -331,43 +331,44 @@ In production, you'd poll this endpoint regularly and export the metrics to your
 
 Here's a quick reference for all the request headers you might use:
 
-| Header | Type | Description |
-|--------|------|-------------|
-| `X-Customer-ID` | Required | Customer identifier (1-64 chars, alphanumeric + `_` `-`) |
-| `BigBunny-Not-Valid-After` | Optional | TTL in seconds (default: 1209600) |
-| `BigBunny-Lock-ID` | Modify ops | Lock token from begin-modify |
-| `BigBunny-Reuse-If-Exists` | create-by-name | Return existing store if name exists (`true`/`false`) |
-| `Content-Type` | Create/Update | Should be `application/octet-stream` for binary data |
+| Header                     | Type           | Description                                              |
+| -------------------------- | -------------- | -------------------------------------------------------- |
+| `X-Customer-ID`            | Required       | Customer identifier (1-64 chars, alphanumeric + `_` `-`) |
+| `BigBunny-Not-Valid-After` | Optional       | TTL in seconds (default: 1209600)                        |
+| `BigBunny-Lock-ID`         | Modify ops     | Lock token from begin-modify                             |
+| `BigBunny-Reuse-If-Exists` | create-by-name | Return existing store if name exists (`true`/`false`)    |
+| `Content-Type`             | Create/Update  | Should be `application/octet-stream` for binary data     |
 
 ## Response Headers Summary
 
 And here are the response headers Big Bunny might include:
 
-| Header | Description |
-|--------|-------------|
-| `BigBunny-Not-Valid-After` | Remaining TTL in seconds |
-| `BigBunny-Lock-ID` | Lock token (from begin-modify) |
-| `BigBunny-Error-Code` | Machine-readable error code |
-| `BigBunny-Warning` | Warning message (e.g., `DegradedWrite`) |
-| `BigBunny-Lock-State` | Lock state indicator (`unknown` after failover) |
-| `Retry-After` | Seconds to wait before retry (for 503/409 errors) |
+| Header                     | Description                                       |
+| -------------------------- | ------------------------------------------------- |
+| `BigBunny-Not-Valid-After` | Remaining TTL in seconds                          |
+| `BigBunny-Lock-ID`         | Lock token (from begin-modify)                    |
+| `BigBunny-Error-Code`      | Machine-readable error code                       |
+| `BigBunny-Warning`         | Warning message (e.g., `DegradedWrite`)           |
+| `BigBunny-Lock-State`      | Lock state indicator (`unknown` after failover)   |
+| `Retry-After`              | Seconds to wait before retry (for 503/409 errors) |
 
 ## Error Codes Reference
 
 Every error response includes a `BigBunny-Error-Code` header with a machine-readable error code. Here's the complete list:
 
-| Code | HTTP | Retryable | Description |
-|------|------|-----------|-------------|
-| `NotFound` | 404 | No | Store or name not found |
-| `Unauthorized` | 403 | No | Customer ID mismatch |
-| `StoreLocked` | 409 | Yes | Lock held by another request |
-| `LockMismatch` | 409 | No | Wrong lock ID |
-| `StoreExpired` | 410 | No | Store TTL expired |
-| `LeaderChanged` | 503 | Yes | Forwarding to primary failed |
-| `StoreUnavailable` | 503 | Yes | Node recovering |
-| `LockStateUnknown` | 409 | Yes | Lock state unclear after failover |
-| `NameCreating` | 503 | Yes | Name reservation in progress |
-| `CapacityExceeded` | 507 | No | Memory limit reached |
+| Code               | HTTP | Retryable | Description                       |
+| ------------------ | ---- | --------- | --------------------------------- |
+| `NotFound`         | 404  | No        | Store or name not found           |
+| `Unauthorized`     | 403  | No        | Customer ID mismatch              |
+| `StoreLocked`      | 409  | Yes       | Lock held by another request      |
+| `LockMismatch`     | 409  | No        | Wrong lock ID                     |
+| `StoreExpired`     | 410  | No        | Store TTL expired                 |
+| `LeaderChanged`    | 503  | Yes       | Forwarding to primary failed      |
+| `StoreUnavailable` | 503  | Yes       | Node recovering                   |
+| `LockStateUnknown` | 409  | Yes       | Lock state unclear after failover |
+| `NameCreating`     | 503  | Yes       | Name reservation in progress      |
+| `CapacityExceeded` | 507  | No        | Memory limit reached              |
+| (none)             | 429  | Yes       | Rate limit exceeded for customer  |
 
 The "Retryable" column indicates whether you should retry the request. For errors like `NotFound` or `LockMismatch`, retrying won't help—you need to fix the problem first. For errors like `StoreLocked` or `LeaderChanged`, retrying after a delay is the right response.
 
@@ -389,32 +390,49 @@ See the [Architecture](architecture.md) document for more details on the consist
 
 ## Rate Limits
 
-Big Bunny doesn't impose artificial rate limits. The natural limits come from:
+Big Bunny implements per-customer rate limiting to prevent resource exhaustion and protect against abusive clients. The rate limiter uses a token bucket algorithm that allows bursts while maintaining average throughput limits.
+
+By default, each customer is limited to **100 requests per second** with a **burst capacity of 200 requests**. When a customer exceeds their limit, requests return `429 Too Many Requests` with a `Retry-After: 1` header suggesting they wait one second before retrying.
+
+The rate limit is configurable via the `--rate-limit` flag (requests per second) and `--burst-size` flag (burst capacity). Setting `--rate-limit=0` disables rate limiting entirely, which is useful for trusted environments or during development.
+
+```bash
+# Enable rate limiting (100 req/s per customer, 200 burst)
+./bbd --rate-limit=100 --burst-size=200
+
+# Higher limits for high-traffic environments
+./bbd --rate-limit=500 --burst-size=1000
+
+# Disable rate limiting
+./bbd --rate-limit=0
+```
+
+The rate limiter enforces limits at the customer level, so one customer can't consume all resources and starve others. Limits apply to all public API endpoints after customer ID extraction, including both direct requests and forwarded requests.
+
+Additional natural limits exist beyond rate limiting:
 
 - **Serialization**: Each store can only be modified by one client at a time. The 500-millisecond lock timeout means you can do at most 2 modifications per second per store.
 
 - **Memory capacity**: Once you hit your memory limit, creates start failing with `CapacityExceeded`.
 
-- **System resources**: Like any software, Big Bunny's throughput is limited by CPU, memory, and network bandwidth. In practice, a single node can handle tens of thousands of operations per second before these become bottlenecks.
-
-If you need to limit client request rates, do it at the application layer before requests reach Big Bunny.
+- **System resources**: CPU, memory, and network bandwidth impose practical limits. A single node can handle tens of thousands of operations per second before these become bottlenecks.
 
 ## Idempotency
 
 Some operations are safe to retry, others are not. Here's the breakdown:
 
-| Operation | Idempotent? | Notes |
-|-----------|-------------|-------|
-| Create | No | Creates new store each time |
-| Snapshot | Yes | Read-only |
-| Update | No | Modifies store each time |
-| Delete | Yes | Deleting non-existent store returns 200 |
-| begin-modify | No | Each call acquires a new lock |
-| complete-modify | No | Modifies store |
-| cancel-modify | Yes | Releasing released lock is a no-op |
-| create-by-name | No* | Unless `Reuse-If-Exists: true` |
-| lookup-id-by-name | Yes | Read-only |
-| delete-by-name | Yes | Deleting non-existent name returns 200 |
+| Operation         | Idempotent? | Notes                                   |
+| ----------------- | ----------- | --------------------------------------- |
+| Create            | No          | Creates new store each time             |
+| Snapshot          | Yes         | Read-only                               |
+| Update            | No          | Modifies store each time                |
+| Delete            | Yes         | Deleting non-existent store returns 200 |
+| begin-modify      | No          | Each call acquires a new lock           |
+| complete-modify   | No          | Modifies store                          |
+| cancel-modify     | Yes         | Releasing released lock is a no-op      |
+| create-by-name    | No*         | Unless `Reuse-If-Exists: true`          |
+| lookup-id-by-name | Yes         | Read-only                               |
+| delete-by-name    | Yes         | Deleting non-existent name returns 200  |
 
 The asterisk on create-by-name means it's not idempotent by default, but you can make it idempotent with the `BigBunny-Reuse-If-Exists: true` header.
 

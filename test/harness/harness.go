@@ -309,7 +309,7 @@ func NewCluster(cfg *ClusterConfig) (*Cluster, error) {
 			ModifyTimeout: cfg.ModifyTimeout,
 			Cipher:        cipher,
 		}
-		apiServer := api.NewServer(apiCfg, storeMgr, replicaMgr, hasher)
+		apiServer := api.NewServer(apiCfg, storeMgr, replicaMgr, hasher, nil)
 
 		mux := http.NewServeMux()
 		apiServer.RegisterRoutes(mux)

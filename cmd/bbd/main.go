@@ -17,6 +17,7 @@ import (
 
 	"github.com/dip-proto/bigbunny/internal/api"
 	"github.com/dip-proto/bigbunny/internal/auth"
+	"github.com/dip-proto/bigbunny/internal/ratelimit"
 	"github.com/dip-proto/bigbunny/internal/registry"
 	"github.com/dip-proto/bigbunny/internal/replica"
 	"github.com/dip-proto/bigbunny/internal/routing"
@@ -82,6 +83,8 @@ func main() {
 		routingSecret   = flag.String("routing-secret", "", "routing secret (hex, or 'dev')")
 		internalToken   = flag.String("internal-token", "", "shared secret for internal endpoints")
 		devMode         = flag.Bool("dev", false, "enable dev mode (no auth required)")
+		rateLimit       = flag.Int("rate-limit", 100, "max requests per second per customer (0 = no limit)")
+		burstSize       = flag.Int("burst-size", 200, "burst capacity per customer")
 	)
 	flag.Parse()
 
@@ -180,6 +183,15 @@ func main() {
 	registryMgr := registry.NewManager()
 	replicaMgr.SetRegistry(registryMgr)
 
+	// Create rate limiter if configured (nil disables rate limiting)
+	var rateLimiter *ratelimit.Limiter
+	if *rateLimit > 0 {
+		rateLimiter = ratelimit.NewLimiter(*rateLimit, *burstSize)
+		log.Printf("rate limiting enabled: %d req/s per customer (burst: %d)", *rateLimit, *burstSize)
+	} else {
+		log.Printf("rate limiting disabled")
+	}
+
 	apiCfg := &api.Config{
 		Site:          *site,
 		HostID:        *hostID,
@@ -189,7 +201,7 @@ func main() {
 		Cipher:        cipher,
 		InternalToken: *internalToken,
 	}
-	apiServer := api.NewServer(apiCfg, storeMgr, replicaMgr, hasher)
+	apiServer := api.NewServer(apiCfg, storeMgr, replicaMgr, hasher, rateLimiter)
 
 	// Set up HTTP mux - separate for UDS (local ops) and TCP (replication only)
 	udsMux := http.NewServeMux()
@@ -236,6 +248,9 @@ func main() {
 	defer cancel()
 
 	replicaMgr.Stop()
+	if rateLimiter != nil {
+		rateLimiter.Stop()
+	}
 	udsServer.Shutdown(ctx)
 	tcpServer.Shutdown(ctx)
 
@@ -422,6 +437,8 @@ Daemon flags:
   --routing-secret    Routing secret (hex, or 'dev')
   --internal-token    Shared secret for internal endpoints
   --dev               Enable dev mode (no auth required)
+  --rate-limit        Max requests per second per customer (default: 100, 0 = no limit)
+  --burst-size        Burst capacity per customer (default: 200)
 
 Environment variables:
   SERIALD_STORE_KEYS        Same as --store-keys

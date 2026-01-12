@@ -217,6 +217,28 @@ The longer-term fix is to reduce how much memory you're using. Are stores expiri
 
 Are you creating more stores than you expected? Look at your usage patterns. Maybe clients are creating stores unnecessarily, or maybe you need more capacity than you thought.
 
+### Rate Limit Errors
+
+If clients are receiving `429 Too Many Requests` responses with `Retry-After: 1` headers, they're hitting the per-customer rate limit. By default, Big Bunny allows 100 requests per second per customer with a burst capacity of 200.
+
+Check if the rate limit is appropriate for your workload. If you have legitimate high-traffic customers, you may need to raise the limits:
+
+```bash
+# Increase to 500 req/s per customer with 1000 burst
+./bbd --rate-limit=500 --burst-size=1000
+```
+
+If rate limiting is causing problems in a trusted environment where abuse isn't a concern, you can disable it entirely:
+
+```bash
+# Disable rate limiting
+./bbd --rate-limit=0
+```
+
+For production, investigate whether the traffic is legitimate or abusive. Check your application logs to see which customers are hitting the limit. Legitimate high-volume customers may need higher limits, while abusive clients should be handled at the application layer (blocking, warning, etc.) before their requests reach Big Bunny.
+
+The rate limiter uses a token bucket algorithm, so burst traffic is allowed. A customer can send 200 requests immediately, then sustain 100 requests per second. If clients are hitting limits during normal operation, they may need to implement backoff and retry logic that respects the `Retry-After` header.
+
 ### Stuck Locks
 
 If all operations on a store fail with `StoreLocked` and it's been more than 500 milliseconds, the lock is stuck. This shouldn't happen normally, but bugs exist.

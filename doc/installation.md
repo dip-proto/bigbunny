@@ -121,7 +121,9 @@ On the first node, you'd start Big Bunny like this:
   --memory-limit=4294967296 \
   --store-keys="$STORE_KEYS" \
   --store-key-current=0 \
-  --internal-token="$INTERNAL_TOKEN"
+  --internal-token="$INTERNAL_TOKEN" \
+  --rate-limit=100 \
+  --burst-size=200
 ```
 
 On the second node, you'd use nearly identical configuration, just swapping the host ID and adjusting the TCP port and peer list. The node with the lexicographically smaller ID becomes primary, so if you name your nodes `node1` and `node2`, node1 will naturally become the primary.
@@ -192,7 +194,8 @@ Now start Big Bunny with these keys:
   --store-keys="0:$(openssl rand -hex 32)" \
   --store-key-current=0 \
   --routing-secret="$(openssl rand -hex 32)" \
-  --internal-token="$(openssl rand -hex 16)"
+  --internal-token="$(openssl rand -hex 16)" \
+  --rate-limit=100 --burst-size=200
 ```
 
 The `--host-id` identifies this node uniquely. The `--tcp` flag specifies where to listen for replication traffic (you need this even for a single node because the architecture assumes it). The `--uds` flag sets the Unix socket path where the local API will be available.
@@ -246,7 +249,8 @@ On the first node (which will become primary):
   --store-keys="0:$STORE_KEY" \
   --store-key-current=0 \
   --routing-secret="$ROUTING_SECRET" \
-  --internal-token="$INTERNAL_TOKEN"
+  --internal-token="$INTERNAL_TOKEN" \
+  --rate-limit=100 --burst-size=200
 ```
 
 On the second node (which will become secondary):
@@ -260,7 +264,8 @@ On the second node (which will become secondary):
   --store-keys="0:$STORE_KEY" \
   --store-key-current=0 \
   --routing-secret="$ROUTING_SECRET" \
-  --internal-token="$INTERNAL_TOKEN"
+  --internal-token="$INTERNAL_TOKEN" \
+  --rate-limit=100 --burst-size=200
 ```
 
 The `--peers` flag tells each node about the other. The format is `id@address:port`. If you're running on the same machine for testing, use `localhost` for both addresses but different ports:

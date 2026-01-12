@@ -43,7 +43,7 @@ func TestAPIIntegration(t *testing.T) {
 		ModifyTimeout: 500 * time.Millisecond,
 		Cipher:        cipher,
 	}
-	apiServer := api.NewServer(apiCfg, storeMgr, replicaMgr, hasher)
+	apiServer := api.NewServer(apiCfg, storeMgr, replicaMgr, hasher, nil)
 
 	mux := http.NewServeMux()
 	apiServer.RegisterRoutes(mux)
@@ -463,7 +463,7 @@ func TestLeaderChangedErrorCode(t *testing.T) {
 		ModifyTimeout: 500 * time.Millisecond,
 		Cipher:        cipher,
 	}
-	apiServer := api.NewServer(apiCfg, storeMgr, replicaMgr, hasher)
+	apiServer := api.NewServer(apiCfg, storeMgr, replicaMgr, hasher, nil)
 
 	mux := http.NewServeMux()
 	apiServer.RegisterRoutes(mux)
@@ -535,7 +535,7 @@ func TestCapacityExceeded(t *testing.T) {
 		ModifyTimeout: 500 * time.Millisecond,
 		Cipher:        cipher,
 	}
-	apiServer := api.NewServer(apiCfg, storeMgr, replicaMgr, hasher)
+	apiServer := api.NewServer(apiCfg, storeMgr, replicaMgr, hasher, nil)
 
 	mux := http.NewServeMux()
 	apiServer.RegisterRoutes(mux)
@@ -617,7 +617,7 @@ func TestMemoryTrackingOnDelete(t *testing.T) {
 		ModifyTimeout: 500 * time.Millisecond,
 		Cipher:        cipher,
 	}
-	apiServer := api.NewServer(apiCfg, storeMgr, replicaMgr, hasher)
+	apiServer := api.NewServer(apiCfg, storeMgr, replicaMgr, hasher, nil)
 
 	mux := http.NewServeMux()
 	apiServer.RegisterRoutes(mux)
@@ -709,7 +709,7 @@ func TestCapacityExceededOnCompleteModify(t *testing.T) {
 		ModifyTimeout: 5 * time.Second,
 		Cipher:        cipher,
 	}
-	apiServer := api.NewServer(apiCfg, storeMgr, replicaMgr, hasher)
+	apiServer := api.NewServer(apiCfg, storeMgr, replicaMgr, hasher, nil)
 
 	mux := http.NewServeMux()
 	apiServer.RegisterRoutes(mux)

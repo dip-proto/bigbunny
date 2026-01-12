@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dip-proto/bigbunny/internal/auth"
+	"github.com/dip-proto/bigbunny/internal/ratelimit"
 	"github.com/dip-proto/bigbunny/internal/registry"
 	"github.com/dip-proto/bigbunny/internal/replica"
 	"github.com/dip-proto/bigbunny/internal/routing"
@@ -21,7 +22,8 @@ type Server struct {
 	hasher           *routing.RendezvousHasher
 	config           *Config
 	cipher           auth.StoreIDCipher
-	forwardingClient *http.Client // Shared HTTP client for request forwarding (with connection pooling)
+	forwardingClient *http.Client         // Shared HTTP client for request forwarding (with connection pooling)
+	rateLimiter      *ratelimit.Limiter   // Per-customer rate limiter (nil if rate limiting disabled)
 }
 
 type Config struct {
@@ -44,7 +46,7 @@ func DefaultConfig() *Config {
 	}
 }
 
-func NewServer(cfg *Config, storeMgr *store.Manager, replicaMgr *replica.Manager, hasher *routing.RendezvousHasher) *Server {
+func NewServer(cfg *Config, storeMgr *store.Manager, replicaMgr *replica.Manager, hasher *routing.RendezvousHasher, rateLimiter *ratelimit.Limiter) *Server {
 	return &Server{
 		store:   storeMgr,
 		replica: replicaMgr,
@@ -59,6 +61,7 @@ func NewServer(cfg *Config, storeMgr *store.Manager, replicaMgr *replica.Manager
 				IdleConnTimeout:     90 * time.Second,
 			},
 		},
+		rateLimiter: rateLimiter,
 	}
 }
 
@@ -1017,6 +1020,14 @@ func (s *Server) requireCustomerID(w http.ResponseWriter, r *http.Request) (stri
 		http.Error(w, "missing customer ID", http.StatusUnauthorized)
 		return "", false
 	}
+
+	// Check rate limit if rate limiter is configured
+	if s.rateLimiter != nil && !s.rateLimiter.Allow(customerID) {
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+		return "", false
+	}
+
 	return customerID, true
 }
 
