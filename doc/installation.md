@@ -13,7 +13,7 @@ The system requirements are modest. Big Bunny runs happily on Linux or macOS wit
 Start by cloning the repository and building the binary. Big Bunny is written in Go, so you'll need Go 1.21 or later installed.
 
 ```bash
-git clone https://github.com/bigbunny/bbd.git
+git clone https://github.com/dip-proto/bigbunny.git
 cd bbd
 ```
 

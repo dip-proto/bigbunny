@@ -216,12 +216,6 @@ Replication is asynchronous, which means the most recent writes (within about a 
 
 Split-brain is possible during network partitions because there's no external consensus service. When the partition heals, the epoch fencing mechanism ensures data doesn't get corrupted, but you might have had two primaries temporarily accepting writes. The [Architecture](architecture.md) document discusses these trade-offs in depth and explains when they're acceptable.
 
-## Getting Help
-
-If you're stuck, start by checking this documentation—most questions are answered somewhere in these guides. For bugs or feature requests, open an issue on GitHub. If you've found a security vulnerability, contact the security team directly at security@bigbunny.example rather than filing a public issue.
-
-The source code lives at [github.com/bigbunny/bbd](https://github.com/bigbunny/bbd), and contributions are welcome. See `CONTRIBUTING.md` for guidelines on how to contribute code, documentation, or bug reports.
-
 ## What's Next?
 
 If you're brand new to Big Bunny, start with the [Introduction](introduction.md) to understand what problems it solves and whether it's right for your use case. If you're ready to try it out, jump straight to the [Quick Start](quickstart.md) for a hands-on walkthrough. Planning a production deployment? The [Operations Guide](operations.md) has everything you need to know. And if you want to understand the algorithms and protocols, the [Architecture](architecture.md) document dives deep into the internals.
