@@ -230,4 +230,4 @@ go test ./test -run ClockSkew -v   # Clock skew tests
 SOAK=1 go test ./test -run Soak    # Full soak test (~3 min)
 ```
 
-The test suite includes 86 tests covering unit, integration, cluster operations, clock skew scenarios, and soak testing.
+The test suite includes 94 tests covering unit, integration, cluster operations, clock skew scenarios, concurrent lock contention, and soak testing.
