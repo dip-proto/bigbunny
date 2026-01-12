@@ -25,6 +25,12 @@ import (
 )
 
 func main() {
+	// Print help if no arguments provided
+	if len(os.Args) == 1 {
+		printUsage()
+		return
+	}
+
 	// Check for CLI subcommands before parsing daemon flags
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
