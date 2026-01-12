@@ -36,48 +36,6 @@ At the same time, Big Bunny isn't trying to be a database. Store IDs are encrypt
 
 The sweet spot is session data that matters for minutes to days, where you need consistency guarantees stronger than a cache but don't want the latency of a database roundtrip.
 
-## The Problem
-
-Modern edge platforms offer various storage solutions, but they each come with significant trade-offs that leave a gap in the middle. On one end, you have key-value stores that provide durability and global distribution, but they're limited to about one write per second per key. That's fine for configuration data that rarely changes, but it falls apart when you need to track hundreds of updates per second for things like API quotas or shopping cart modifications.
-
-On the other end of the spectrum, caches are fast, but they offer no consistency guarantees. When two requests try to update the same data simultaneously, one update can silently overwrite the other. There's also no protection against data loss from cache eviction. For session data that needs to be modified frequently and reliably, caches simply aren't enough.
-
-Traditional databases solve the consistency problem, but they're too slow for edge use cases. When you're running code at the edge to minimize latency for end users, the last thing you want is to add tens or hundreds of milliseconds reaching back to a centralized database for every session read or write.
-
-This gap has real consequences. One customer needed accurate rate limiting counters at the edge and ended up using a competitor's platform specifically for this feature. Other customers want to track user behavior in real-time or maintain shopping cart state with high update frequencies. They need something faster than a database, more consistent than a cache, and more capable than existing key-value stores.
-
-### What customers actually need
-
-Consider a content delivery platform enforcing API quotas at the edge. They sell plans that include a certain number of API requests per month, and they need to track usage accurately as requests come in. Every non-cached request needs to increment a counter, and that counter needs to be consistent. If two edge workers both try to increment the counter at the same time, neither update can be lost.
-
-A cache won't work because cache evictions would lose count data. A traditional key-value store works but hits the write rate limit almost immediately. What they need is something in between: fast enough for edge deployment, consistent enough to prevent lost updates, but without the durability requirements of a database.
-
-Another common pattern we see is shopping cart state. Users add items to their cart throughout a session, requiring frequent updates. Each cart modification needs to be consistent (you can't lose cart items due to a race condition), but the data doesn't need to survive a datacenter outage. If a user's session data disappears after a few hours, they'll just start over. The important thing is that while the session exists, the data is fast, consistent, and survives individual host failures.
-
-Big Bunny was built specifically for these use cases.
-
-## The Problem
-
-Modern edge computing platforms face a frustrating gap in their storage offerings. If you look at what's available today, you'll find key-value stores that are durable and globally distributed but limited to about one write per second per key. You'll find caches that are fast but inconsistent, with no real guarantees against losing your data or serving stale reads. And you'll find databases that are persistent and reliable, but far too slow for edge use cases that need hundreds of writes per second with millisecond latency.
-
-This gap leaves several important use cases struggling to find a home. Consider rate limiting at the edge. You need a counter that updates hundreds of times per second with perfect accuracy. A key-value store is too slow. A cache might lose your count. A database is too far away.
-
-Or think about session state for a shopping cart. You need fast reads and writes, consistency so you don't lose items, and you need it to live for hours or days, not just seconds. A cache might evict your data, a database adds too much latency, and existing solutions force you to choose between speed and correctness.
-
-This is the gap that Big Bunny fills. It gives you the speed of a cache with the consistency of a database, while accepting that your data doesn't need to live forever. Session data is ephemeral by nature, and Big Bunny embraces this reality rather than fighting it.
-
-## The Solution
-
-Big Bunny provides fast, consistent, replicated storage that sits right where you need it: at the edge, in memory, with automatic failover if a host goes down. Think of it as a specialized tool for a specific job. You wouldn't use a hammer to drive a screw, and you shouldn't use a global database for temporary session counters.
-
-The core insight is that session storage has different requirements than persistent storage. Sessions are temporary, updates are frequent, and consistency matters more than durability. Big Bunny is built around these truths. It keeps your data in RAM for microsecond-level access times, replicates it to a second node for failover, and gives you a simple lock-based API that prevents race conditions without requiring you to understand CRDTs or operational transforms.
-
-When you create a store in Big Bunny, you get back an encrypted identifier. This isn't just security theater. The encryption means that clients can't see where their data lives or how it's routed, and more importantly, it prevents customers from accessing each other's stores. Every store belongs to exactly one customer, enforced cryptographically, not just by application logic.
-
-The replication happens asynchronously, which means your writes return immediately without waiting for network round trips. This is a deliberate trade-off: you get low latency at the cost of potentially losing recent writes if both replicas fail simultaneously. For session storage, this is usually the right choice. Nobody wants their shopping cart update to take 50 milliseconds when it could take 100 microseconds.
-
-Failover is automatic. If the primary node goes down, the secondary detects this within about four seconds and promotes itself. Your application just retries the request and everything works. No manual intervention, no operator on call at 3 AM. The system is designed to handle the most common failure mode (single host failure) gracefully and automatically.
-
 ## What Makes This Different
 
 Big Bunny doesn't try to be everything to everyone. It's not a database replacement. It's not a cache. It's not a message queue. It's a session store, and it's really good at being a session store.

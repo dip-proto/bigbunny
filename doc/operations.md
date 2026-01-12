@@ -246,7 +246,7 @@ If all operations on a store fail with `StoreLocked` and it's been more than 500
 The lock should automatically expire after 500 milliseconds. If it doesn't, that's a bug. As a workaround, you can force-release the lock:
 
 ```bash
-./bbd release-lock <store-id> -uds=/var/run/bbd/bbd.sock
+./bbd release-lock -uds=/var/run/bbd/bbd.sock <store-id>
 ```
 
 This bypasses the normal lock checking and clears the lock unconditionally. Only use this when you're sure the lock is genuinely stuck and not legitimately held.

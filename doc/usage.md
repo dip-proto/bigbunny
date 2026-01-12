@@ -518,7 +518,7 @@ This immediately increments the epoch and makes the node primary. Use this only 
 Force-release a lock without normal checks:
 
 ```bash
-./bbd release-lock <store-id> -uds=/var/run/bbd/bbd.sock
+./bbd release-lock -uds=/var/run/bbd/bbd.sock <store-id>
 ```
 
 This clears the lock unconditionally, bypassing customer verification and lock ID checks. Only use this when a lock is genuinely stuck due to a bug. If you use it while a legitimate client holds the lock, you'll break that client's modify operation.
