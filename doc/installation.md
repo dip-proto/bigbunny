@@ -119,11 +119,14 @@ On the first node, you'd start Big Bunny like this:
   --uds=/var/run/bbd/bbd.sock \
   --peers=node2@10.0.1.2:8082 \
   --memory-limit=4294967296 \
+  --customer-memory-quota=104857600 \
   --store-keys="$STORE_KEYS" \
   --store-key-current=0 \
   --internal-token="$INTERNAL_TOKEN" \
   --rate-limit=100 \
-  --burst-size=200
+  --burst-size=200 \
+  --tombstone-customer-limit=1000 \
+  --tombstone-global-limit=10000
 ```
 
 On the second node, you'd use nearly identical configuration, just swapping the host ID and adjusting the TCP port and peer list. The node with the lexicographically smaller ID becomes primary, so if you name your nodes `node1` and `node2`, node1 will naturally become the primary.
@@ -335,6 +338,47 @@ Big Bunny keeps everything in RAM, which is great for performance but means you 
 When you hit this limit, new stores can't be created. Existing stores continue working, but create operations return a `CapacityExceeded` error. This is a hard limit—there's no spillover to disk or fancy eviction policy. You either have room for the store or you don't.
 
 For capacity planning, figure that each store needs about 4KB total (2KB for the body plus ~2KB for metadata). A 4GB limit gives you roughly one million stores per node. Remember that stores are replicated, so with RF=2, you're storing two copies of everything.
+
+## Resource Exhaustion Protection
+
+Big Bunny includes several features to prevent resource exhaustion attacks. These protections ensure that no single customer can monopolize system resources or bring down the service through rapid operations.
+
+### Per-Customer Memory Quotas
+
+Beyond the global memory limit, you can set per-customer quotas to prevent any single customer from consuming all available memory:
+
+```bash
+./bbd --customer-memory-quota=104857600  # 100 MB per customer
+```
+
+When a customer hits their quota, additional create operations return a `CustomerQuotaExceeded` error (HTTP 507). Set to 0 to disable per-customer quotas.
+
+### Tombstone Limits
+
+When stores are deleted, Big Bunny creates tombstones to prevent resurrection during replication. An attacker could exploit this by rapidly creating and deleting stores to exhaust memory with tombstones. Tombstone limits prevent this:
+
+```bash
+./bbd \
+  --tombstone-customer-limit=1000 \   # Max 1000 tombstones per customer
+  --tombstone-global-limit=10000      # Max 10000 tombstones total
+```
+
+When limits are reached, delete operations return a `TombstoneLimitExceeded` error (HTTP 429). Tombstones are automatically cleaned up after 24 hours, freeing up slots. Set either limit to 0 to disable.
+
+### HTTP Server Timeouts
+
+To defend against Slowloris-style attacks where malicious clients hold connections open, configure HTTP timeouts:
+
+```bash
+./bbd \
+  --http-read-timeout=30s \           # Time to read entire request
+  --http-read-header-timeout=10s \    # Time to read headers
+  --http-write-timeout=30s \          # Time to write response
+  --http-idle-timeout=120s \          # Keep-alive connection timeout
+  --http-max-header-bytes=1048576     # Max header size (1 MB)
+```
+
+These timeouts apply to both the Unix socket API and the TCP replication server. The defaults are reasonable for most deployments, but you may want to tune them based on your network conditions.
 
 ## File Permissions
 
