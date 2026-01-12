@@ -406,22 +406,22 @@ Usage:
   bbd [daemon flags]           Start the daemon
 
 Ops commands:
-  bbd status [options]         Show node status
-  bbd promote [options]        Force promotion to primary
-  bbd release-lock <store-id>  Force release a lock
+  bbd status [options]                     Show node status
+  bbd promote [options]                    Force promotion to primary
+  bbd release-lock [options] <store-id>    Force release a lock
 
 Store commands:
   bbd create [options]                     Create an anonymous store
-  bbd create-named <name> [options]        Create a named store
-  bbd get <store-id> [options]             Get store contents
-  bbd delete <store-id> [options]          Delete a store by ID
-  bbd delete-named <name> [options]        Delete a store by name
-  bbd lookup <name> [options]              Lookup store ID by name
+  bbd create-named [options] <name>        Create a named store
+  bbd get [options] <store-id>             Get store contents
+  bbd delete [options] <store-id>          Delete a store by ID
+  bbd delete-named [options] <name>        Delete a store by name
+  bbd lookup [options] <name>              Lookup store ID by name
 
 Modify commands:
-  bbd begin-modify <store-id> [options]    Begin modify (returns lock ID)
-  bbd complete-modify <store-id> --lock <lock-id> [options]
-  bbd cancel-modify <store-id> --lock <lock-id> [options]
+  bbd begin-modify [options] <store-id>    Begin modify (returns lock ID)
+  bbd complete-modify [options] <store-id> Complete modify with new data
+  bbd cancel-modify [options] <store-id>   Cancel modify operation
 
 Daemon flags:
   --host-id           Unique host identifier (default: host1)
@@ -501,17 +501,17 @@ Examples:
   echo '{"key": "value"}' | bbd create
 
   # Create a named store
-  bbd create-named my-session --data "session data"
+  bbd create-named --data "session data" my-session
 
   # Get store contents
-  bbd get <store-id>
+  bbd get --uds=/tmp/bbd.sock <store-id>
 
   # Modify a store (atomic read-modify-write)
-  LOCK=$(bbd begin-modify <store-id>)
-  bbd complete-modify <store-id> --lock "$LOCK" --data "new data"
+  LOCK=$(bbd begin-modify --uds=/tmp/bbd.sock <store-id>)
+  bbd complete-modify --uds=/tmp/bbd.sock --lock "$LOCK" --data "new data" <store-id>
 
   # Cancel a modify operation
-  bbd cancel-modify <store-id> --lock "$LOCK"
+  bbd cancel-modify --uds=/tmp/bbd.sock --lock "$LOCK" <store-id>
 
   # Check node status
   bbd status --uds=/tmp/bbd.sock
@@ -520,7 +520,7 @@ Examples:
   bbd promote --uds=/tmp/bbd.sock
 
   # Force release a stuck lock (ops command)
-  bbd release-lock <store-id> --uds=/tmp/bbd.sock`)
+  bbd release-lock --uds=/tmp/bbd.sock <store-id>`)
 }
 
 func runStatusCommand(args []string) {
