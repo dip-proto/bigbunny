@@ -1088,7 +1088,7 @@ func runCounterCreateCommand(args []string) {
 	mustParseFlagSet(fs, args)
 
 	// Build JSON request body
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"type":  "counter",
 		"value": *value,
 	}
