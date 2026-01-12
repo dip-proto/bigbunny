@@ -111,15 +111,18 @@ type Manager struct {
 
 	customerIndex map[string]map[string]struct{} // customerID -> set of store IDs
 
-	usedBytes   int64 // current memory usage
-	memoryLimit int64 // max memory allowed (0 = no limit)
+	usedBytes           int64            // current memory usage
+	memoryLimit         int64            // max memory allowed (0 = no limit)
+	customerMemory      map[string]int64 // customerID -> bytes used
+	customerMemoryQuota int64            // uniform quota per customer (0 = no limit)
 }
 
 // NewManager creates a store manager with no memory limit.
 func NewManager() *Manager {
 	return &Manager{
-		stores:        make(map[string]*Store),
-		customerIndex: make(map[string]map[string]struct{}),
+		stores:         make(map[string]*Store),
+		customerIndex:  make(map[string]map[string]struct{}),
+		customerMemory: make(map[string]int64),
 	}
 }
 
@@ -127,9 +130,10 @@ func NewManager() *Manager {
 // memory usage would exceed the limit.
 func NewManagerWithLimit(memoryLimit int64) *Manager {
 	return &Manager{
-		stores:        make(map[string]*Store),
-		customerIndex: make(map[string]map[string]struct{}),
-		memoryLimit:   memoryLimit,
+		stores:         make(map[string]*Store),
+		customerIndex:  make(map[string]map[string]struct{}),
+		customerMemory: make(map[string]int64),
+		memoryLimit:    memoryLimit,
 	}
 }
 
@@ -137,6 +141,12 @@ func (m *Manager) SetMemoryLimit(limit int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.memoryLimit = limit
+}
+
+func (m *Manager) SetCustomerMemoryQuota(quota int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.customerMemoryQuota = quota
 }
 
 func storeSize(s *Store) int64 {
@@ -152,6 +162,16 @@ func (m *Manager) Create(s *Store) error {
 	}
 
 	size := storeSize(s)
+
+	// Check per-customer quota first
+	if m.customerMemoryQuota > 0 {
+		customerUsed := m.customerMemory[s.CustomerID]
+		if customerUsed+size > m.customerMemoryQuota {
+			return ErrCustomerQuotaExceeded
+		}
+	}
+
+	// Check global limit
 	if m.memoryLimit > 0 && m.usedBytes+size > m.memoryLimit {
 		return ErrCapacityExceeded
 	}
@@ -160,6 +180,7 @@ func (m *Manager) Create(s *Store) error {
 	s.Version = 1
 	m.stores[s.ID] = s
 	m.usedBytes += size
+	m.customerMemory[s.CustomerID] += size
 
 	if m.customerIndex[s.CustomerID] == nil {
 		m.customerIndex[s.CustomerID] = make(map[string]struct{})
@@ -202,7 +223,9 @@ func (m *Manager) Update(s *Store) error {
 	// Track memory change
 	oldSize := storeSize(existing)
 	newSize := storeSize(s)
-	m.usedBytes += newSize - oldSize
+	sizeDelta := newSize - oldSize
+	m.usedBytes += sizeDelta
+	m.customerMemory[s.CustomerID] += sizeDelta
 
 	s.Version = existing.Version + 1
 	m.stores[s.ID] = s
@@ -246,7 +269,9 @@ func (m *Manager) ApplyReplicatedUpdate(update *ReplicatedUpdate) error {
 	// Track size change
 	oldBodyLen := len(existing.Body)
 	newBodyLen := len(update.Body)
-	m.usedBytes += int64(newBodyLen - oldBodyLen)
+	sizeDelta := int64(newBodyLen - oldBodyLen)
+	m.usedBytes += sizeDelta
+	m.customerMemory[existing.CustomerID] += sizeDelta
 
 	// Merge: update only the replicated fields, preserve the rest
 	existing.DataType = update.DataType
@@ -274,6 +299,7 @@ func (m *Manager) CreateOrUpdate(s *Store) error {
 		s.CreatedAt = time.Now()
 		m.stores[s.ID] = s
 		m.usedBytes += size
+		m.customerMemory[s.CustomerID] += size
 		if m.customerIndex[s.CustomerID] == nil {
 			m.customerIndex[s.CustomerID] = make(map[string]struct{})
 		}
@@ -290,9 +316,11 @@ func (m *Manager) CreateOrUpdate(s *Store) error {
 	if s.Version > existing.Version {
 		oldSize := storeSize(existing)
 		newSize := storeSize(s)
+		sizeDelta := newSize - oldSize
 		s.CreatedAt = existing.CreatedAt // preserve original creation time
 		m.stores[s.ID] = s
-		m.usedBytes += newSize - oldSize
+		m.usedBytes += sizeDelta
+		m.customerMemory[s.CustomerID] += sizeDelta
 	}
 	return nil
 }
@@ -312,6 +340,7 @@ func (m *Manager) CreateIfNotExists(s *Store) error {
 	s.CreatedAt = time.Now()
 	m.stores[s.ID] = s
 	m.usedBytes += size
+	m.customerMemory[s.CustomerID] += size
 	if m.customerIndex[s.CustomerID] == nil {
 		m.customerIndex[s.CustomerID] = make(map[string]struct{})
 	}
@@ -331,7 +360,12 @@ func (m *Manager) Delete(storeID, customerID string) error {
 		return ErrUnauthorized
 	}
 
-	m.usedBytes -= storeSize(s)
+	size := storeSize(s)
+	m.usedBytes -= size
+	m.customerMemory[customerID] -= size
+	if m.customerMemory[customerID] == 0 {
+		delete(m.customerMemory, customerID)
+	}
 	delete(m.stores, storeID)
 	if idx := m.customerIndex[customerID]; idx != nil {
 		delete(idx, storeID)
@@ -479,6 +513,7 @@ func (m *Manager) CompleteLock(storeID, customerID, lockID string, newBody []byt
 	s.Version++
 	s.Lock = nil
 	m.usedBytes += sizeDelta
+	m.customerMemory[s.CustomerID] += sizeDelta
 
 	// Return a copy to avoid races
 	return s.Copy(), nil
@@ -582,7 +617,12 @@ func (m *Manager) ForceDelete(storeID string) error {
 		return nil // idempotent
 	}
 
-	m.usedBytes -= storeSize(s)
+	size := storeSize(s)
+	m.usedBytes -= size
+	m.customerMemory[s.CustomerID] -= size
+	if m.customerMemory[s.CustomerID] == 0 {
+		delete(m.customerMemory, s.CustomerID)
+	}
 	delete(m.stores, storeID)
 	if idx := m.customerIndex[s.CustomerID]; idx != nil {
 		delete(idx, storeID)
@@ -612,7 +652,12 @@ func (m *Manager) DeleteIfExpiredAndUnlocked(storeID string) bool {
 		return false
 	}
 
-	m.usedBytes -= storeSize(s)
+	size := storeSize(s)
+	m.usedBytes -= size
+	m.customerMemory[s.CustomerID] -= size
+	if m.customerMemory[s.CustomerID] == 0 {
+		delete(m.customerMemory, s.CustomerID)
+	}
 	delete(m.stores, storeID)
 	if idx := m.customerIndex[s.CustomerID]; idx != nil {
 		delete(idx, storeID)
@@ -644,13 +689,16 @@ func (m *Manager) Reset(stores []*Store) {
 	// Clear existing state
 	m.stores = make(map[string]*Store)
 	m.customerIndex = make(map[string]map[string]struct{})
+	m.customerMemory = make(map[string]int64)
 	m.usedBytes = 0
 
 	// Rebuild from snapshot
 	for _, s := range stores {
 		s.Role = RoleSecondary
 		m.stores[s.ID] = s
-		m.usedBytes += storeSize(s)
+		size := storeSize(s)
+		m.usedBytes += size
+		m.customerMemory[s.CustomerID] += size
 
 		if m.customerIndex[s.CustomerID] == nil {
 			m.customerIndex[s.CustomerID] = make(map[string]struct{})
@@ -780,7 +828,9 @@ func (m *Manager) Increment(storeID, customerID string, delta int64, leaderEpoch
 		s.ExpiresAt = newExpiresAt
 	}
 	newSize := storeSize(s)
-	m.usedBytes += newSize - oldSize
+	sizeDelta := newSize - oldSize
+	m.usedBytes += sizeDelta
+	m.customerMemory[s.CustomerID] += sizeDelta
 
 	return &CounterResult{
 		Value:       newValue,
@@ -873,7 +923,9 @@ func (m *Manager) SetCounter(storeID, customerID string, value int64, newExpires
 		s.ExpiresAt = newExpiresAt
 	}
 	newSize := storeSize(s)
-	m.usedBytes += newSize - oldSize
+	sizeDelta := newSize - oldSize
+	m.usedBytes += sizeDelta
+	m.customerMemory[s.CustomerID] += sizeDelta
 
 	return s.Version, nil
 }

@@ -51,6 +51,10 @@ type Config struct {
 	ModifyTimeout      time.Duration // lock timeout for modify operations
 	InternalToken      string        // shared secret for internal endpoints
 
+	// Tombstone limits (0 = no limit)
+	TombstonePerCustomerLimit int // max tombstones per customer
+	TombstoneGlobalLimit      int // max tombstones globally
+
 	// Testing hooks (optional)
 	HTTPClient           *http.Client     // custom client for network simulation; nil = default
 	Now                  func() time.Time // custom clock for deterministic tests; nil = time.Now
@@ -86,8 +90,9 @@ type Manager struct {
 	replicationQueue chan *ReplicationMessage
 	registryQueue    chan *RegistryReplicationMessage
 
-	tombstones   map[string]time.Time // storeID -> tombstone time
-	tombstoneTTL time.Duration
+	tombstones             map[string]time.Time           // storeID -> tombstone time
+	tombstoneCustomerIndex map[string]map[string]struct{} // customerID -> set of storeIDs
+	tombstoneTTL           time.Duration
 
 	lastPromotionAt      time.Time // when this node became primary (for lock unknown window)
 	lastReplicationFail  time.Time // when replication last failed
@@ -117,20 +122,21 @@ func NewManager(config *Config, storeMgr *store.Manager, hasher *routing.Rendezv
 	}
 
 	m := &Manager{
-		config:           config,
-		store:            storeMgr,
-		hasher:           hasher,
-		client:           client,
-		now:              now,
-		role:             RoleUnknown,
-		leaderEpoch:      0,
-		peerLastSeen:     make(map[string]time.Time),
-		replicationQueue: make(chan *ReplicationMessage, 10000),
-		registryQueue:    make(chan *RegistryReplicationMessage, 10000),
-		tombstones:       make(map[string]time.Time),
-		tombstoneTTL:     24 * time.Hour,
-		ctx:              ctx,
-		cancel:           cancel,
+		config:                 config,
+		store:                  storeMgr,
+		hasher:                 hasher,
+		client:                 client,
+		now:                    now,
+		role:                   RoleUnknown,
+		leaderEpoch:            0,
+		peerLastSeen:           make(map[string]time.Time),
+		replicationQueue:       make(chan *ReplicationMessage, 10000),
+		registryQueue:          make(chan *RegistryReplicationMessage, 10000),
+		tombstones:             make(map[string]time.Time),
+		tombstoneCustomerIndex: make(map[string]map[string]struct{}),
+		tombstoneTTL:           24 * time.Hour,
+		ctx:                    ctx,
+		cancel:                 cancel,
 	}
 
 	return m
@@ -568,14 +574,59 @@ func (m *Manager) cleanupTombstones() {
 	for storeID, ts := range m.tombstones {
 		if now.Sub(ts) > m.tombstoneTTL {
 			delete(m.tombstones, storeID)
+			// Remove from customer index
+			for customerID, storeIDs := range m.tombstoneCustomerIndex {
+				if _, exists := storeIDs[storeID]; exists {
+					delete(storeIDs, storeID)
+					if len(storeIDs) == 0 {
+						delete(m.tombstoneCustomerIndex, customerID)
+					}
+					break
+				}
+			}
 		}
 	}
 }
 
-func (m *Manager) AddTombstone(storeID string) {
+// AddTombstone adds a tombstone for a deleted store.
+// Returns ErrTombstoneLimitExceeded if per-customer or global limits are exceeded.
+// This method should be called from primary delete handlers (enforces limits).
+func (m *Manager) AddTombstone(storeID, customerID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Check global limit
+	if m.config.TombstoneGlobalLimit > 0 && len(m.tombstones) >= m.config.TombstoneGlobalLimit {
+		return ErrTombstoneLimitExceeded
+	}
+
+	// Check per-customer limit
+	if m.config.TombstonePerCustomerLimit > 0 {
+		if len(m.tombstoneCustomerIndex[customerID]) >= m.config.TombstonePerCustomerLimit {
+			return ErrTombstoneLimitExceeded
+		}
+	}
+
+	// Add tombstone
 	m.tombstones[storeID] = m.now()
+	if m.tombstoneCustomerIndex[customerID] == nil {
+		m.tombstoneCustomerIndex[customerID] = make(map[string]struct{})
+	}
+	m.tombstoneCustomerIndex[customerID][storeID] = struct{}{}
+	return nil
+}
+
+// AddTombstoneReplicated adds a tombstone without limit checks.
+// This method should be called from replication and cleanup paths (secondary must mirror primary).
+func (m *Manager) AddTombstoneReplicated(storeID, customerID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.tombstones[storeID] = m.now()
+	if m.tombstoneCustomerIndex[customerID] == nil {
+		m.tombstoneCustomerIndex[customerID] = make(map[string]struct{})
+	}
+	m.tombstoneCustomerIndex[customerID][storeID] = struct{}{}
 }
 
 func (m *Manager) IsTombstoned(storeID string) bool {
@@ -608,8 +659,11 @@ func (m *Manager) ResetTombstones(entries []TombstoneEntry) {
 }
 
 // resetTombstonesLocked replaces tombstones assuming m.mu is already held.
+// Note: Customer index is cleared during reset since TombstoneEntry doesn't contain customerID.
+// This is acceptable because limit enforcement only applies to primary nodes.
 func (m *Manager) resetTombstonesLocked(entries []TombstoneEntry) {
 	m.tombstones = make(map[string]time.Time)
+	m.tombstoneCustomerIndex = make(map[string]map[string]struct{})
 	for _, e := range entries {
 		m.tombstones[e.StoreID] = e.DeletedAt
 	}
@@ -676,7 +730,7 @@ func (m *Manager) ApplyReplication(msg *ReplicationMessage) error {
 		return err
 
 	case MsgDeleteStore:
-		m.AddTombstone(msg.StoreID)
+		m.AddTombstoneReplicated(msg.StoreID, msg.CustomerID)
 		err := m.store.Delete(msg.StoreID, msg.CustomerID)
 		if err == store.ErrStoreNotFound {
 			// Already deleted, idempotent
@@ -907,7 +961,7 @@ func (m *Manager) cleanupOrphans() {
 			continue
 		}
 
-		m.AddTombstone(orphan.ID)
+		m.AddTombstoneReplicated(orphan.ID, orphan.CustomerID)
 		m.QueueReplication(&ReplicationMessage{
 			Type:       MsgDeleteStore,
 			StoreID:    orphan.ID,
@@ -1012,7 +1066,7 @@ func (m *Manager) cleanupExpiredStores() {
 			}
 		}
 
-		m.AddTombstone(s.ID)
+		m.AddTombstoneReplicated(s.ID, s.CustomerID)
 		m.QueueReplication(&ReplicationMessage{
 			Type:       MsgDeleteStore,
 			StoreID:    s.ID,

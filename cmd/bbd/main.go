@@ -84,19 +84,27 @@ func main() {
 
 	// Daemon mode
 	var (
-		hostID          = flag.String("host-id", "host1", "unique host identifier")
-		site            = flag.String("site", "local", "site identifier")
-		udsPath         = flag.String("uds", "/tmp/bbd.sock", "unix domain socket path")
-		tcpAddr         = flag.String("tcp", ":8080", "TCP address for inter-host communication")
-		peers           = flag.String("peers", "", "comma-separated peer list (id@host:port,...)")
-		memoryLimit     = flag.Int64("memory-limit", 0, "max memory for stores in bytes (0 = no limit)")
-		storeKeys       = flag.String("store-keys", "", "encryption keys (id:hexkey,... or 'dev')")
-		storeKeyCurrent = flag.String("store-key-current", "", "current encryption key ID")
-		routingSecret   = flag.String("routing-secret", "", "routing secret (hex, or 'dev')")
-		internalToken   = flag.String("internal-token", "", "shared secret for internal endpoints")
-		devMode         = flag.Bool("dev", false, "enable dev mode (no auth required)")
-		rateLimit       = flag.Int("rate-limit", 100, "max requests per second per customer (0 = no limit)")
-		burstSize       = flag.Int("burst-size", 200, "burst capacity per customer")
+		hostID                    = flag.String("host-id", "host1", "unique host identifier")
+		site                      = flag.String("site", "local", "site identifier")
+		udsPath                   = flag.String("uds", "/tmp/bbd.sock", "unix domain socket path")
+		tcpAddr                   = flag.String("tcp", ":8080", "TCP address for inter-host communication")
+		peers                     = flag.String("peers", "", "comma-separated peer list (id@host:port,...)")
+		memoryLimit               = flag.Int64("memory-limit", 0, "max memory for stores in bytes (0 = no limit)")
+		customerMemoryQuota       = flag.Int64("customer-memory-quota", 0, "max memory per customer in bytes (0 = no limit)")
+		storeKeys                 = flag.String("store-keys", "", "encryption keys (id:hexkey,... or 'dev')")
+		storeKeyCurrent           = flag.String("store-key-current", "", "current encryption key ID")
+		routingSecret             = flag.String("routing-secret", "", "routing secret (hex, or 'dev')")
+		internalToken             = flag.String("internal-token", "", "shared secret for internal endpoints")
+		devMode                   = flag.Bool("dev", false, "enable dev mode (no auth required)")
+		rateLimit                 = flag.Int("rate-limit", 100, "max requests per second per customer (0 = no limit)")
+		burstSize                 = flag.Int("burst-size", 200, "burst capacity per customer")
+		tombstonePerCustomerLimit = flag.Int("tombstone-customer-limit", 0, "max tombstones per customer (0 = no limit)")
+		tombstoneGlobalLimit      = flag.Int("tombstone-global-limit", 0, "max tombstones globally (0 = no limit)")
+		httpReadTimeout           = flag.Duration("http-read-timeout", 30*time.Second, "HTTP read timeout")
+		httpReadHeaderTimeout     = flag.Duration("http-read-header-timeout", 10*time.Second, "HTTP read header timeout")
+		httpWriteTimeout          = flag.Duration("http-write-timeout", 30*time.Second, "HTTP write timeout")
+		httpIdleTimeout           = flag.Duration("http-idle-timeout", 120*time.Second, "HTTP idle timeout")
+		httpMaxHeaderBytes        = flag.Int("http-max-header-bytes", 1<<20, "HTTP max header bytes (1MB default)")
 	)
 	flag.Parse()
 
@@ -173,6 +181,8 @@ func main() {
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Printf("starting bbd: host=%s site=%s", *hostID, *site)
+	log.Printf("HTTP timeouts: read=%v readHeader=%v write=%v idle=%v maxHeader=%d",
+		*httpReadTimeout, *httpReadHeaderTimeout, *httpWriteTimeout, *httpIdleTimeout, *httpMaxHeaderBytes)
 
 	// Initialize components
 	var storeMgr *store.Manager
@@ -183,6 +193,12 @@ func main() {
 		storeMgr = store.NewManager()
 	}
 
+	// Set per-customer memory quota if configured
+	if *customerMemoryQuota > 0 {
+		storeMgr.SetCustomerMemoryQuota(*customerMemoryQuota)
+		log.Printf("customer memory quota: %d bytes", *customerMemoryQuota)
+	}
+
 	// Build initial host list
 	hosts := buildHostList(*hostID, *tcpAddr, *peers)
 	hasher := routing.NewRendezvousHasher(hosts, *routingSecret)
@@ -190,7 +206,14 @@ func main() {
 	replicaCfg := replica.DefaultConfig(*hostID, *site)
 	replicaCfg.TCPAddress = *tcpAddr
 	replicaCfg.InternalToken = *internalToken
+	replicaCfg.TombstonePerCustomerLimit = *tombstonePerCustomerLimit
+	replicaCfg.TombstoneGlobalLimit = *tombstoneGlobalLimit
 	replicaMgr := replica.NewManager(replicaCfg, storeMgr, hasher)
+
+	// Log tombstone limits if configured
+	if *tombstonePerCustomerLimit > 0 || *tombstoneGlobalLimit > 0 {
+		log.Printf("tombstone limits: per-customer=%d global=%d", *tombstonePerCustomerLimit, *tombstoneGlobalLimit)
+	}
 
 	registryMgr := registry.NewManager()
 	replicaMgr.SetRegistry(registryMgr)
@@ -244,10 +267,10 @@ func main() {
 	}
 
 	// Start UDS server for local component access (includes ops endpoints)
-	udsServer := startUDSServer(*udsPath, udsMux)
+	udsServer := startUDSServer(*udsPath, udsMux, *httpReadTimeout, *httpReadHeaderTimeout, *httpWriteTimeout, *httpIdleTimeout, *httpMaxHeaderBytes)
 
 	// Start TCP server for inter-host communication (no ops endpoints)
-	tcpServer := startTCPServer(*tcpAddr, tcpHandler)
+	tcpServer := startTCPServer(*tcpAddr, tcpHandler, *httpReadTimeout, *httpReadHeaderTimeout, *httpWriteTimeout, *httpIdleTimeout, *httpMaxHeaderBytes)
 
 	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
@@ -360,7 +383,7 @@ func internalAuthMiddleware(next http.Handler, token string) http.Handler {
 	})
 }
 
-func startUDSServer(path string, handler http.Handler) *http.Server {
+func startUDSServer(path string, handler http.Handler, readTimeout, readHeaderTimeout, writeTimeout, idleTimeout time.Duration, maxHeaderBytes int) *http.Server {
 	// Remove existing socket file (ignore error if it doesn't exist)
 	_ = os.Remove(path)
 
@@ -375,7 +398,14 @@ func startUDSServer(path string, handler http.Handler) *http.Server {
 		log.Printf("warning: failed to chmod socket: %v", err)
 	}
 
-	server := &http.Server{Handler: handler}
+	server := &http.Server{
+		Handler:           handler,
+		ReadTimeout:       readTimeout,
+		ReadHeaderTimeout: readHeaderTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+		MaxHeaderBytes:    maxHeaderBytes,
+	}
 	go func() {
 		log.Printf("UDS server listening on %s", path)
 		if err := server.Serve(listener); err != http.ErrServerClosed {
@@ -386,10 +416,15 @@ func startUDSServer(path string, handler http.Handler) *http.Server {
 	return server
 }
 
-func startTCPServer(addr string, handler http.Handler) *http.Server {
+func startTCPServer(addr string, handler http.Handler, readTimeout, readHeaderTimeout, writeTimeout, idleTimeout time.Duration, maxHeaderBytes int) *http.Server {
 	server := &http.Server{
-		Addr:    addr,
-		Handler: handler,
+		Addr:              addr,
+		Handler:           handler,
+		ReadTimeout:       readTimeout,
+		ReadHeaderTimeout: readHeaderTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+		MaxHeaderBytes:    maxHeaderBytes,
 	}
 
 	go func() {

@@ -369,10 +369,10 @@ func TestTombstonesSnapshot(t *testing.T) {
 
 	mgr := replica.NewManager(config, storeMgr, hasher)
 
-	// Add some tombstones
-	mgr.AddTombstone("store1")
-	mgr.AddTombstone("store2")
-	mgr.AddTombstone("store3")
+	// Add some tombstones (use replicated variant for testing without limits)
+	mgr.AddTombstoneReplicated("store1", "test-customer")
+	mgr.AddTombstoneReplicated("store2", "test-customer")
+	mgr.AddTombstoneReplicated("store3", "test-customer")
 
 	// Get snapshot
 	snapshot := mgr.TombstonesSnapshot()
@@ -402,9 +402,9 @@ func TestResetTombstones(t *testing.T) {
 
 	mgr := replica.NewManager(config, storeMgr, hasher)
 
-	// Add initial tombstones
-	mgr.AddTombstone("old1")
-	mgr.AddTombstone("old2")
+	// Add initial tombstones (use replicated variant for testing without limits)
+	mgr.AddTombstoneReplicated("old1", "test-customer")
+	mgr.AddTombstoneReplicated("old2", "test-customer")
 
 	// Reset with new tombstones
 	newTombstones := []replica.TombstoneEntry{

@@ -520,7 +520,7 @@ func (s *Server) handleCreateByName(w http.ResponseWriter, r *http.Request) {
 	committed, err := reg.Commit(customerID, name, entry.ReservationID, storeID, st.ExpiresAt, s.replica.LeaderEpoch())
 	if err != nil {
 		_ = s.store.ForceDelete(storeID)
-		s.replica.AddTombstone(storeID)
+		s.replica.AddTombstoneReplicated(storeID, customerID)
 		s.replica.QueueReplication(&replica.ReplicationMessage{
 			Type:       replica.MsgDeleteStore,
 			StoreID:    storeID,
@@ -582,12 +582,17 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check tombstone limit BEFORE deleting the store
+	if err := s.replica.AddTombstone(storeID, customerID); err != nil {
+		writeHTTPError(w, err, "")
+		return
+	}
+
 	if err := s.store.Delete(storeID, customerID); err != nil {
 		writeHTTPError(w, err, "failed to delete store")
 		return
 	}
 
-	s.replica.AddTombstone(storeID)
 	s.replica.QueueReplication(&replica.ReplicationMessage{
 		Type:       replica.MsgDeleteStore,
 		StoreID:    storeID,
@@ -650,7 +655,32 @@ func (s *Server) handleDeleteByName(w http.ResponseWriter, r *http.Request) {
 	})
 
 	storeErr := error(nil)
+	var shardID string
 	if deleting.StoreID != "" {
+		// Check tombstone limit BEFORE deleting
+		if err := s.replica.AddTombstone(deleting.StoreID, customerID); err != nil {
+			// Revert registry state
+			if revertErr := reg.RevertToActive(customerID, name); revertErr == nil {
+				if active, lookupErr := reg.Lookup(customerID, name); lookupErr == nil {
+					s.replica.QueueRegistryReplication(&replica.RegistryReplicationMessage{
+						Type:          replica.MsgRegistryCommit,
+						CustomerID:    active.CustomerID,
+						Name:          active.Name,
+						StoreID:       active.StoreID,
+						State:         int(active.State),
+						ExpiresAt:     active.ExpiresAt,
+						ReservationID: active.ReservationID,
+						Version:       active.Version,
+					})
+				}
+			}
+			writeHTTPError(w, err, "")
+			return
+		}
+
+		if components, err := s.openStoreID(deleting.StoreID, customerID); err == nil && components != nil {
+			shardID = components.ShardID
+		}
 		storeErr = s.store.Delete(deleting.StoreID, customerID)
 	}
 
@@ -674,11 +704,6 @@ func (s *Server) handleDeleteByName(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if deleting.StoreID != "" {
-		var shardID string
-		if components, err := s.openStoreID(deleting.StoreID, customerID); err == nil && components != nil {
-			shardID = components.ShardID
-		}
-		s.replica.AddTombstone(deleting.StoreID)
 		s.replica.QueueReplication(&replica.ReplicationMessage{
 			Type:       replica.MsgDeleteStore,
 			StoreID:    deleting.StoreID,
