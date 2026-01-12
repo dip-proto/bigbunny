@@ -203,6 +203,8 @@ Now start Big Bunny with these keys:
 
 The `--host-id` identifies this node uniquely. The `--tcp` flag specifies where to listen for replication traffic (you need this even for a single node because the architecture assumes it). The `--uds` flag sets the Unix socket path where the local API will be available.
 
+The `--site` flag (e.g., `--site=nyc01`) identifies which Point of Presence this node belongs to. Store IDs are cryptographically bound to their site, preventing them from being used on different sites. For deployments that need cross-site portability (migrations, debugging), the `--disable-site-verification` flag allows store IDs to work across sites with the same master key.
+
 If you want to use environment variables instead (recommended), create a file with your secrets:
 
 ```bash
