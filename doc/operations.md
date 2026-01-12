@@ -18,9 +18,14 @@ Here's what a typical production deployment looks like. You'd start the first no
   --uds=/var/run/bbd/bbd.sock \
   --peers=node2@10.0.1.2:8082 \
   --memory-limit=4294967296 \
+  --customer-memory-quota=104857600 \
   --store-keys="$STORE_KEYS" \
   --store-key-current=0 \
-  --internal-token="$INTERNAL_TOKEN"
+  --internal-token="$INTERNAL_TOKEN" \
+  --rate-limit=100 \
+  --burst-size=200 \
+  --tombstone-customer-limit=1000 \
+  --tombstone-global-limit=10000
 ```
 
 The second node gets almost identical configuration, just with a different host ID and adjusted network settings. Because `node1` sorts before `node2` alphabetically, node1 automatically becomes the primary. This deterministic election avoids the coordination overhead of leader election protocols.
@@ -216,6 +221,41 @@ Check memory usage in the status output. If you're at or near your limit, you ha
 The longer-term fix is to reduce how much memory you're using. Are stores expiring appropriately? Check your TTLs. If stores are living too long, lower the default TTL or encourage clients to set shorter TTLs.
 
 Are you creating more stores than you expected? Look at your usage patterns. Maybe clients are creating stores unnecessarily, or maybe you need more capacity than you thought.
+
+### Customer Quota Exceeded
+
+If individual customers are hitting `CustomerQuotaExceeded` errors (HTTP 507), they've exceeded their per-customer memory allocation. This is different from global memory exhaustion—other customers can still create stores.
+
+Check which customers are hitting limits and why. Are they creating more stores than expected? Are their stores larger than typical? Sometimes this indicates a bug in the client application (forgetting to delete old stores, for example).
+
+If the quota is legitimately too low for your workload, increase it:
+
+```bash
+# Increase to 200 MB per customer
+./bbd --customer-memory-quota=209715200
+```
+
+If per-customer quotas are causing problems and you trust all your customers, you can disable them:
+
+```bash
+# Disable per-customer quotas
+./bbd --customer-memory-quota=0
+```
+
+### Tombstone Limit Exceeded
+
+If delete operations are returning `TombstoneLimitExceeded` errors (HTTP 429), a customer has deleted too many stores in a short period. Tombstones are retained for 24 hours to prevent resurrection during replication, and limits prevent memory exhaustion from rapid create/delete cycles.
+
+This is usually a sign of either abusive behavior (intentional rapid delete cycles) or a bug in the client application. Investigate the source of the deletes before adjusting limits.
+
+If the limit is too low for legitimate workloads:
+
+```bash
+# Increase limits
+./bbd --tombstone-customer-limit=5000 --tombstone-global-limit=50000
+```
+
+Tombstones are cleaned up automatically after 24 hours, so affected customers just need to wait. If this is a persistent problem, consider whether the application architecture is creating and deleting stores too frequently.
 
 ### Rate Limit Errors
 
