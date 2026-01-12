@@ -62,6 +62,7 @@ type ReplicationMessage struct {
 	StoreID     string        `json:"store_id,omitempty"`
 	ShardID     string        `json:"shard_id,omitempty"`
 	CustomerID  string        `json:"customer_id,omitempty"`
+	DataType    uint8         `json:"data_type,omitempty"`
 	Body        []byte        `json:"body,omitempty"`
 	ExpiresAt   time.Time     `json:"expires_at,omitempty"`
 	Version     uint64        `json:"version,omitempty"`

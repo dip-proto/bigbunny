@@ -630,6 +630,7 @@ func (m *Manager) ApplyReplication(msg *ReplicationMessage) error {
 			ID:               msg.StoreID,
 			ShardID:          msg.ShardID,
 			CustomerID:       msg.CustomerID,
+			DataType:         store.DataType(msg.DataType),
 			Body:             msg.Body,
 			ExpiresAt:        msg.ExpiresAt,
 			Version:          msg.Version,
@@ -646,6 +647,7 @@ func (m *Manager) ApplyReplication(msg *ReplicationMessage) error {
 		update := &store.ReplicatedUpdate{
 			StoreID:          msg.StoreID,
 			CustomerID:       msg.CustomerID,
+			DataType:         store.DataType(msg.DataType),
 			Body:             msg.Body,
 			ExpiresAt:        msg.ExpiresAt,
 			Version:          msg.Version,
@@ -659,6 +661,7 @@ func (m *Manager) ApplyReplication(msg *ReplicationMessage) error {
 				ID:               msg.StoreID,
 				ShardID:          msg.ShardID,
 				CustomerID:       msg.CustomerID,
+				DataType:         store.DataType(msg.DataType),
 				Body:             msg.Body,
 				ExpiresAt:        msg.ExpiresAt,
 				Version:          msg.Version,

@@ -12,6 +12,21 @@ const (
 	RoleSecondary
 )
 
+type DataType uint8
+
+const (
+	DataTypeBlob DataType = iota
+)
+
+func (d DataType) String() string {
+	switch d {
+	case DataTypeBlob:
+		return "blob"
+	default:
+		return "unknown"
+	}
+}
+
 func (r ReplicaRole) String() string {
 	switch r {
 	case RolePrimary:
@@ -42,6 +57,7 @@ type Store struct {
 	ID               string
 	ShardID          string // for replication routing (extracted from encrypted store ID)
 	CustomerID       string
+	DataType         DataType
 	Body             []byte
 	ExpiresAt        time.Time
 	Version          uint64
@@ -170,6 +186,7 @@ func (m *Manager) Update(s *Store) error {
 type ReplicatedUpdate struct {
 	StoreID          string
 	CustomerID       string
+	DataType         DataType
 	Body             []byte
 	ExpiresAt        time.Time
 	Version          uint64
@@ -204,6 +221,7 @@ func (m *Manager) ApplyReplicatedUpdate(update *ReplicatedUpdate) error {
 	m.usedBytes += int64(newBodyLen - oldBodyLen)
 
 	// Merge: update only the replicated fields, preserve the rest
+	existing.DataType = update.DataType
 	existing.Body = update.Body
 	existing.ExpiresAt = update.ExpiresAt
 	existing.Version = update.Version
@@ -446,6 +464,7 @@ func (s *Store) Copy() *Store {
 		ID:               s.ID,
 		ShardID:          s.ShardID,
 		CustomerID:       s.CustomerID,
+		DataType:         s.DataType,
 		Body:             bodyCopy,
 		ExpiresAt:        s.ExpiresAt,
 		Version:          s.Version,
