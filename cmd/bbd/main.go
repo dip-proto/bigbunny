@@ -418,28 +418,33 @@ Usage:
   bbd [daemon flags]           Start the daemon
 
 Ops commands:
-  bbd status [options]                     Show node status
-  bbd promote [options]                    Force promotion to primary
-  bbd release-lock [options] <store-id>    Force release a lock
+  bbd status [options]                       Show node status
+  bbd promote [options]                      Force promotion to primary
+  bbd release-lock [options] <store-id>      Force release a lock
 
 Store commands:
-  bbd create [options]                     Create a blob store (anonymous or named)
-  bbd get [options] <store-id>             Get store contents
-  bbd delete [options] <store-id>          Delete a store by ID
-  bbd delete-named [options] <name>        Delete a store by name
-  bbd lookup [options] <name>              Lookup store ID by name
+  bbd create [options]                       Create a blob store (anonymous or named)
+  bbd get [options] <store-id>               Get store contents
+  bbd delete [options] <store-id>            Delete a store by ID
+  bbd delete-named [options] <name>          Delete a store by name
+  bbd lookup [options] <name>                Lookup store ID by name
 
 Modify commands:
-  bbd begin-modify [options] <store-id>    Begin modify (returns lock ID)
-  bbd complete-modify [options] <store-id> Complete modify with new data
-  bbd cancel-modify [options] <store-id>   Cancel modify operation
+  bbd begin-modify [options] <store-id>      Begin modify (returns lock ID)
+  bbd complete-modify -lock <lock-id> [options] <store-id>
+                                             Complete modify with new data
+  bbd cancel-modify -lock <lock-id> [options] <store-id>
+                                             Cancel modify operation
 
 Counter commands:
-  bbd counter-create [options]             Create a counter store (anonymous or named)
-  bbd counter-get [options] <store-id>     Get counter value
-  bbd counter-increment [options] <store-id>  Increment counter
-  bbd counter-decrement [options] <store-id>  Decrement counter
-  bbd counter-set [options] <store-id>     Set counter to specific value
+  bbd counter-create [options]               Create a counter store (anonymous or named)
+  bbd counter-get [options] <store-id>       Get counter value
+  bbd counter-increment [-delta N] [options] <store-id>
+                                             Increment counter
+  bbd counter-decrement [-delta N] [options] <store-id>
+                                             Decrement counter
+  bbd counter-set -value N [options] <store-id>
+                                             Set counter to specific value
 
 Daemon flags:
   --host-id           Unique host identifier (default: host1)
@@ -666,7 +671,7 @@ func runReleaseLockCommand(args []string) {
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd release-lock <store-id>\n")
+		fmt.Fprintf(os.Stderr, "usage: bbd release-lock [options] <store-id>\n")
 		os.Exit(1)
 	}
 	storeID := remaining[0]
@@ -800,7 +805,7 @@ func runGetCommand(args []string) {
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd get <store-id> [options]\n")
+		fmt.Fprintf(os.Stderr, "usage: bbd get [options] <store-id>\n")
 		os.Exit(1)
 	}
 	storeID := remaining[0]
@@ -834,7 +839,7 @@ func runDeleteCommand(args []string) {
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd delete <store-id> [options]\n")
+		fmt.Fprintf(os.Stderr, "usage: bbd delete [options] <store-id>\n")
 		os.Exit(1)
 	}
 	storeID := remaining[0]
@@ -861,7 +866,7 @@ func runDeleteNamedCommand(args []string) {
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd delete-named <name> [options]\n")
+		fmt.Fprintf(os.Stderr, "usage: bbd delete-named [options] <name>\n")
 		os.Exit(1)
 	}
 	name := remaining[0]
@@ -888,7 +893,7 @@ func runLookupCommand(args []string) {
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd lookup <name> [options]\n")
+		fmt.Fprintf(os.Stderr, "usage: bbd lookup [options] <name>\n")
 		os.Exit(1)
 	}
 	name := remaining[0]
@@ -917,7 +922,7 @@ func runBeginModifyCommand(args []string) {
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd begin-modify <store-id> [options]\n")
+		fmt.Fprintf(os.Stderr, "usage: bbd begin-modify [options] <store-id>\n")
 		os.Exit(1)
 	}
 	storeID := remaining[0]
@@ -956,7 +961,7 @@ func runCompleteModifyCommand(args []string) {
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd complete-modify <store-id> -lock <lock-id> [options]\n")
+		fmt.Fprintf(os.Stderr, "usage: bbd complete-modify -lock <lock-id> [options] <store-id>\n")
 		os.Exit(1)
 	}
 	storeID := remaining[0]
@@ -997,7 +1002,7 @@ func runCancelModifyCommand(args []string) {
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd cancel-modify <store-id> -lock <lock-id> [options]\n")
+		fmt.Fprintf(os.Stderr, "usage: bbd cancel-modify -lock <lock-id> [options] <store-id>\n")
 		os.Exit(1)
 	}
 	storeID := remaining[0]
@@ -1089,7 +1094,7 @@ func runCounterGetCommand(args []string) {
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd counter-get <store-id> [options]\n")
+		fmt.Fprintf(os.Stderr, "usage: bbd counter-get [options] <store-id>\n")
 		os.Exit(1)
 	}
 	storeID := remaining[0]
@@ -1127,7 +1132,7 @@ func runCounterIncrementCommand(args []string) {
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd counter-increment <store-id> [-delta N] [options]\n")
+		fmt.Fprintf(os.Stderr, "usage: bbd counter-increment [-delta N] [options] <store-id>\n")
 		os.Exit(1)
 	}
 	storeID := remaining[0]
@@ -1171,7 +1176,7 @@ func runCounterDecrementCommand(args []string) {
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd counter-decrement <store-id> [-delta N] [options]\n")
+		fmt.Fprintf(os.Stderr, "usage: bbd counter-decrement [-delta N] [options] <store-id>\n")
 		os.Exit(1)
 	}
 	storeID := remaining[0]
@@ -1215,7 +1220,7 @@ func runCounterSetCommand(args []string) {
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd counter-set <store-id> -value N [options]\n")
+		fmt.Fprintf(os.Stderr, "usage: bbd counter-set -value N [options] <store-id>\n")
 		os.Exit(1)
 	}
 	storeID := remaining[0]
