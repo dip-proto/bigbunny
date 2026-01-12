@@ -115,7 +115,7 @@ func (r *RendezvousHasher) GetAllHosts() []*Host {
 }
 
 func (r *RendezvousHasher) GetHealthyHosts() []*Host {
-	healthy := make([]*Host, 0)
+	var healthy []*Host
 	for _, h := range r.hosts {
 		if h.Healthy {
 			healthy = append(healthy, h)

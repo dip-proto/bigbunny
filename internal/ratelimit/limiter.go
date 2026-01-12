@@ -6,11 +6,11 @@ import (
 )
 
 type Limiter struct {
-	mu       sync.RWMutex
-	buckets  map[string]*tokenBucket
-	rate     float64 // tokens per second
-	capacity float64 // max tokens in bucket
-	clock    Clock
+	mu          sync.RWMutex
+	buckets     map[string]*tokenBucket
+	rate        float64 // tokens per second
+	capacity    float64 // max tokens in bucket
+	clock       Clock
 	stopCleanup chan struct{}
 	cleanupWg   sync.WaitGroup
 }
@@ -118,15 +118,8 @@ func (l *Limiter) Stop() {
 	l.cleanupWg.Wait()
 }
 
-func (l *Limiter) Stats() (numBuckets int) {
+func (l *Limiter) Stats() int {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	return len(l.buckets)
-}
-
-func min(a, b float64) float64 {
-	if a < b {
-		return a
-	}
-	return b
 }

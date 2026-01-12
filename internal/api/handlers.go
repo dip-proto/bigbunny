@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,8 +23,8 @@ type Server struct {
 	hasher           *routing.RendezvousHasher
 	config           *Config
 	cipher           auth.StoreIDCipher
-	forwardingClient *http.Client         // Shared HTTP client for request forwarding (with connection pooling)
-	rateLimiter      *ratelimit.Limiter   // Per-customer rate limiter (nil if rate limiting disabled)
+	forwardingClient *http.Client       // Shared HTTP client for request forwarding (with connection pooling)
+	rateLimiter      *ratelimit.Limiter // Per-customer rate limiter (nil if rate limiting disabled)
 }
 
 type Config struct {
@@ -145,7 +146,7 @@ func (s *Server) forwardToLeader(w http.ResponseWriter, r *http.Request, leaderA
 		http.Error(w, "forwarding failed: "+err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Copy all response headers (preserves BigBunny-Error-Code, etc.)
 	for key, values := range resp.Header {
@@ -156,7 +157,9 @@ func (s *Server) forwardToLeader(w http.ResponseWriter, r *http.Request, leaderA
 
 	// Copy response status and body
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		log.Printf("error copying forwarded response body: %v", err)
+	}
 }
 
 // getInternalToken retrieves the internal token for forwarding requests.
@@ -250,7 +253,9 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	s.checkDegradedWrite(w)
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(storeID))
+	if _, err := w.Write([]byte(storeID)); err != nil {
+		log.Printf("error writing response body: %v", err)
+	}
 }
 
 func (s *Server) handleCreateByName(w http.ResponseWriter, r *http.Request) {
@@ -258,9 +263,8 @@ func (s *Server) handleCreateByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	customerID := s.extractCustomerID(r)
-	if customerID == "" {
-		http.Error(w, "missing customer ID", http.StatusUnauthorized)
+	customerID, ok := s.requireCustomerID(w, r)
+	if !ok {
 		return
 	}
 
@@ -284,7 +288,9 @@ func (s *Server) handleCreateByName(w http.ResponseWriter, r *http.Request) {
 			case registry.StateActive:
 				w.Header().Set("Content-Type", "text/plain")
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(existing.StoreID))
+				if _, err := w.Write([]byte(existing.StoreID)); err != nil {
+					log.Printf("error writing response body: %v", err)
+				}
 				return
 			case registry.StateCreating:
 				http.Error(w, "name reservation in progress", http.StatusConflict)
@@ -338,12 +344,7 @@ func (s *Server) handleCreateByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ttl := s.config.DefaultTTL
-	if ttlHeader := r.Header.Get("BigBunny-Not-Valid-After"); ttlHeader != "" {
-		if secs, err := strconv.ParseInt(ttlHeader, 10, 64); err == nil {
-			ttl = time.Duration(secs) * time.Second
-		}
-	}
+	ttl := s.parseTTLHeader(r)
 
 	shardID, err := routing.GenerateShardID()
 	if err != nil {
@@ -439,7 +440,9 @@ func (s *Server) handleCreateByName(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(storeID))
+	if _, err := w.Write([]byte(storeID)); err != nil {
+		log.Printf("error writing response body: %v", err)
+	}
 }
 
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
@@ -630,7 +633,9 @@ func (s *Server) handleLookupIDByName(w http.ResponseWriter, r *http.Request) {
 		_ = st // store exists and is valid
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(entry.StoreID))
+		if _, err := w.Write([]byte(entry.StoreID)); err != nil {
+			log.Printf("error writing response body: %v", err)
+		}
 	case registry.StateCreating:
 		writeRetryableError(w, ErrCodeNameCreating, "name reservation in progress", time.Second)
 	case registry.StateDeleting:
@@ -662,7 +667,9 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("BigBunny-Not-Valid-After", strconv.FormatInt(int64(ttlRemaining), 10))
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.WriteHeader(http.StatusOK)
-	w.Write(st.Body)
+	if _, err := w.Write(st.Body); err != nil {
+		log.Printf("error writing response body: %v", err)
+	}
 }
 
 func (s *Server) handleBeginModify(w http.ResponseWriter, r *http.Request) {
@@ -713,7 +720,9 @@ func (s *Server) handleBeginModify(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("BigBunny-Lock-ID", lockID)
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.WriteHeader(http.StatusOK)
-	w.Write(st.Body)
+	if _, err := w.Write(st.Body); err != nil {
+		log.Printf("error writing response body: %v", err)
+	}
 }
 
 func (s *Server) handleCompleteModify(w http.ResponseWriter, r *http.Request) {
@@ -854,7 +863,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := s.store.CompleteLock(storeID, customerID, lockID, body, newExpiresAt)
 	if err != nil {
-		s.store.ReleaseLock(storeID, customerID, lockID)
+		_ = s.store.ReleaseLock(storeID, customerID, lockID)
 		writeHTTPError(w, err, "failed to update store")
 		return
 	}
@@ -921,20 +930,26 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	ack := s.replica.HandleHeartbeat(&hb)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ack)
+	if err := json.NewEncoder(w).Encode(ack); err != nil {
+		log.Printf("error encoding JSON response: %v", err)
+	}
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	status := s.replica.GetStatus()
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(status)
+	if err := json.NewEncoder(w).Encode(status); err != nil {
+		log.Printf("error encoding JSON response: %v", err)
+	}
 }
 
 // handlePromote forces this node to become primary.
 func (s *Server) handlePromote(w http.ResponseWriter, r *http.Request) {
 	s.replica.ForcePromote()
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("promoted"))
+	if _, err := w.Write([]byte("promoted")); err != nil {
+		log.Printf("error writing response body: %v", err)
+	}
 }
 
 // handleForceReleaseLock forcibly releases a lock on a store without customer verification.
@@ -955,7 +970,9 @@ func (s *Server) handleForceReleaseLock(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("lock released"))
+	if _, err := w.Write([]byte("lock released")); err != nil {
+		log.Printf("error writing response body: %v", err)
+	}
 }
 
 // handleInternalSnapshot returns a snapshot of stores and tombstones for recovery.
@@ -977,7 +994,9 @@ func (s *Server) handleInternalSnapshot(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("error encoding JSON response: %v", err)
+	}
 }
 
 // RegistrySnapshotResponse is the response for registry snapshot requests.
@@ -1007,7 +1026,9 @@ func (s *Server) handleRegistrySnapshot(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("error encoding JSON response: %v", err)
+	}
 }
 
 func (s *Server) extractCustomerID(r *http.Request) string {
@@ -1197,7 +1218,9 @@ func (s *Server) handleRegistryReserve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("error encoding JSON response: %v", err)
+	}
 }
 
 type RegistryCommitRequest struct {
@@ -1260,7 +1283,9 @@ func (s *Server) handleRegistryCommit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("error encoding JSON response: %v", err)
+	}
 }
 
 type RegistryAbortRequest struct {
@@ -1344,14 +1369,17 @@ func (s *Server) handleRegistryLookup(w http.ResponseWriter, r *http.Request) {
 		State: entry.State.String(),
 	}
 
-	if entry.State == registry.StateActive {
+	switch entry.State {
+	case registry.StateActive:
 		resp.StoreID = entry.StoreID
-	} else if entry.State == registry.StateCreating {
+	case registry.StateCreating:
 		resp.ReservationID = entry.ReservationID
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("error encoding JSON response: %v", err)
+	}
 }
 
 type RegistryDeleteRequest struct {

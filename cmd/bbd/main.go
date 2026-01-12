@@ -251,8 +251,12 @@ func main() {
 	if rateLimiter != nil {
 		rateLimiter.Stop()
 	}
-	udsServer.Shutdown(ctx)
-	tcpServer.Shutdown(ctx)
+	if err := udsServer.Shutdown(ctx); err != nil {
+		log.Printf("UDS server shutdown error: %v", err)
+	}
+	if err := tcpServer.Shutdown(ctx); err != nil {
+		log.Printf("TCP server shutdown error: %v", err)
+	}
 
 	log.Println("shutdown complete")
 }
@@ -317,20 +321,15 @@ func sortHostsByID(hosts []*routing.Host) {
 }
 
 func splitPeers(s string) []string {
-	var result []string
-	current := ""
-	for _, c := range s {
-		if c == ',' {
-			if current != "" {
-				result = append(result, current)
-				current = ""
-			}
-		} else {
-			current += string(c)
-		}
+	if s == "" {
+		return nil
 	}
-	if current != "" {
-		result = append(result, current)
+	parts := strings.Split(s, ",")
+	var result []string
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			result = append(result, trimmed)
+		}
 	}
 	return result
 }
@@ -350,8 +349,8 @@ func internalAuthMiddleware(next http.Handler, token string) http.Handler {
 }
 
 func startUDSServer(path string, handler http.Handler) *http.Server {
-	// Remove existing socket file
-	os.Remove(path)
+	// Remove existing socket file (ignore error if it doesn't exist)
+	_ = os.Remove(path)
 
 	listener, err := net.Listen("unix", path)
 	if err != nil {
@@ -528,14 +527,14 @@ func runStatusCommand(args []string) {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
 	jsonOutput := fs.Bool("json", false, "output raw JSON")
-	fs.Parse(args)
+	mustParseFlagSet(fs, args)
 
 	resp, err := doUDSRequest("GET", *udsPath, "/status", nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -583,14 +582,14 @@ func runStatusCommand(args []string) {
 func runPromoteCommand(args []string) {
 	fs := flag.NewFlagSet("promote", flag.ExitOnError)
 	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
-	fs.Parse(args)
+	mustParseFlagSet(fs, args)
 
 	resp, err := doUDSRequest("POST", *udsPath, "/internal/promote", nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(resp.Body)
 
@@ -605,7 +604,7 @@ func runPromoteCommand(args []string) {
 func runReleaseLockCommand(args []string) {
 	fs := flag.NewFlagSet("release-lock", flag.ExitOnError)
 	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
-	fs.Parse(args)
+	mustParseFlagSet(fs, args)
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
@@ -619,7 +618,7 @@ func runReleaseLockCommand(args []string) {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(resp.Body)
 
@@ -633,6 +632,43 @@ func runReleaseLockCommand(args []string) {
 
 func doUDSRequest(method, socketPath, path string, body io.Reader) (*http.Response, error) {
 	return doUDSRequestWithHeaders(method, socketPath, path, body, nil)
+}
+
+func mustParseFlagSet(fs *flag.FlagSet, args []string) {
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "error parsing flags: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func readBodyData(data string) []byte {
+	if data != "" {
+		return []byte(data)
+	}
+	bodyData, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error reading stdin: %v\n", err)
+		os.Exit(1)
+	}
+	return bodyData
+}
+
+func checkResponse(resp *http.Response, operation string) {
+	if resp.StatusCode == http.StatusOK {
+		return
+	}
+	body, _ := io.ReadAll(resp.Body)
+	fmt.Fprintf(os.Stderr, "%s failed (%d): %s\n", operation, resp.StatusCode, string(body))
+	if errCode := resp.Header.Get("BigBunny-Error-Code"); errCode != "" {
+		fmt.Fprintf(os.Stderr, "error code: %s\n", errCode)
+	}
+	os.Exit(1)
+}
+
+func printWarning(resp *http.Response) {
+	if warning := resp.Header.Get("BigBunny-Warning"); warning != "" {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
+	}
 }
 
 func doUDSRequestWithHeaders(method, socketPath, path string, body io.Reader, headers map[string]string) (*http.Response, error) {
@@ -663,23 +699,11 @@ func runCreateCommand(args []string) {
 	customerID := fs.String("customer", "test-customer", "customer ID")
 	ttl := fs.Int("ttl", 0, "TTL in seconds (0 = default 14 days)")
 	data := fs.String("data", "", "store data (or read from stdin if empty)")
-	fs.Parse(args)
+	mustParseFlagSet(fs, args)
 
-	var bodyData []byte
-	if *data != "" {
-		bodyData = []byte(*data)
-	} else {
-		var err error
-		bodyData, err = io.ReadAll(os.Stdin)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error reading stdin: %v\n", err)
-			os.Exit(1)
-		}
-	}
+	bodyData := readBodyData(*data)
 
-	headers := map[string]string{
-		"X-Customer-ID": *customerID,
-	}
+	headers := map[string]string{"X-Customer-ID": *customerID}
 	if *ttl > 0 {
 		headers["BigBunny-Not-Valid-After"] = fmt.Sprintf("%d", *ttl)
 	}
@@ -689,24 +713,13 @@ func runCreateCommand(args []string) {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
+
+	checkResponse(resp, "create")
 
 	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "create failed (%d): %s\n", resp.StatusCode, string(body))
-		if errCode := resp.Header.Get("BigBunny-Error-Code"); errCode != "" {
-			fmt.Fprintf(os.Stderr, "error code: %s\n", errCode)
-		}
-		os.Exit(1)
-	}
-
-	storeID := strings.TrimSpace(string(body))
-	fmt.Println(storeID)
-
-	if warning := resp.Header.Get("BigBunny-Warning"); warning != "" {
-		fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
-	}
+	fmt.Println(strings.TrimSpace(string(body)))
+	printWarning(resp)
 }
 
 func runCreateNamedCommand(args []string) {
@@ -716,7 +729,7 @@ func runCreateNamedCommand(args []string) {
 	ttl := fs.Int("ttl", 0, "TTL in seconds (0 = default 14 days)")
 	data := fs.String("data", "", "store data (or read from stdin if empty)")
 	reuse := fs.Bool("reuse", false, "reuse existing store if name exists")
-	fs.Parse(args)
+	mustParseFlagSet(fs, args)
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
@@ -725,21 +738,9 @@ func runCreateNamedCommand(args []string) {
 	}
 	name := remaining[0]
 
-	var bodyData []byte
-	if *data != "" {
-		bodyData = []byte(*data)
-	} else {
-		var err error
-		bodyData, err = io.ReadAll(os.Stdin)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error reading stdin: %v\n", err)
-			os.Exit(1)
-		}
-	}
+	bodyData := readBodyData(*data)
 
-	headers := map[string]string{
-		"X-Customer-ID": *customerID,
-	}
+	headers := map[string]string{"X-Customer-ID": *customerID}
 	if *ttl > 0 {
 		headers["BigBunny-Not-Valid-After"] = fmt.Sprintf("%d", *ttl)
 	}
@@ -752,24 +753,13 @@ func runCreateNamedCommand(args []string) {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
+
+	checkResponse(resp, "create-named")
 
 	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "create-named failed (%d): %s\n", resp.StatusCode, string(body))
-		if errCode := resp.Header.Get("BigBunny-Error-Code"); errCode != "" {
-			fmt.Fprintf(os.Stderr, "error code: %s\n", errCode)
-		}
-		os.Exit(1)
-	}
-
-	storeID := strings.TrimSpace(string(body))
-	fmt.Println(storeID)
-
-	if warning := resp.Header.Get("BigBunny-Warning"); warning != "" {
-		fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
-	}
+	fmt.Println(strings.TrimSpace(string(body)))
+	printWarning(resp)
 }
 
 func runGetCommand(args []string) {
@@ -777,7 +767,7 @@ func runGetCommand(args []string) {
 	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
 	customerID := fs.String("customer", "test-customer", "customer ID")
 	showTTL := fs.Bool("ttl", false, "show remaining TTL")
-	fs.Parse(args)
+	mustParseFlagSet(fs, args)
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
@@ -786,26 +776,16 @@ func runGetCommand(args []string) {
 	}
 	storeID := remaining[0]
 
-	headers := map[string]string{
-		"X-Customer-ID": *customerID,
-	}
+	headers := map[string]string{"X-Customer-ID": *customerID}
 
 	resp, err := doUDSRequestWithHeaders("POST", *udsPath, "/api/v1/snapshot/"+storeID, nil, headers)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "get failed (%d): %s\n", resp.StatusCode, string(body))
-		if errCode := resp.Header.Get("BigBunny-Error-Code"); errCode != "" {
-			fmt.Fprintf(os.Stderr, "error code: %s\n", errCode)
-		}
-		os.Exit(1)
-	}
+	checkResponse(resp, "get")
 
 	if *showTTL {
 		if ttlStr := resp.Header.Get("BigBunny-Not-Valid-After"); ttlStr != "" {
@@ -813,6 +793,7 @@ func runGetCommand(args []string) {
 		}
 	}
 
+	body, _ := io.ReadAll(resp.Body)
 	fmt.Print(string(body))
 }
 
@@ -820,7 +801,7 @@ func runDeleteCommand(args []string) {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
 	customerID := fs.String("customer", "test-customer", "customer ID")
-	fs.Parse(args)
+	mustParseFlagSet(fs, args)
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
@@ -829,39 +810,25 @@ func runDeleteCommand(args []string) {
 	}
 	storeID := remaining[0]
 
-	headers := map[string]string{
-		"X-Customer-ID": *customerID,
-	}
+	headers := map[string]string{"X-Customer-ID": *customerID}
 
 	resp, err := doUDSRequestWithHeaders("POST", *udsPath, "/api/v1/delete/"+storeID, nil, headers)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "delete failed (%d): %s\n", resp.StatusCode, string(body))
-		if errCode := resp.Header.Get("BigBunny-Error-Code"); errCode != "" {
-			fmt.Fprintf(os.Stderr, "error code: %s\n", errCode)
-		}
-		os.Exit(1)
-	}
-
+	checkResponse(resp, "delete")
 	fmt.Println("deleted")
-
-	if warning := resp.Header.Get("BigBunny-Warning"); warning != "" {
-		fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
-	}
+	printWarning(resp)
 }
 
 func runDeleteNamedCommand(args []string) {
 	fs := flag.NewFlagSet("delete-named", flag.ExitOnError)
 	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
 	customerID := fs.String("customer", "test-customer", "customer ID")
-	fs.Parse(args)
+	mustParseFlagSet(fs, args)
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
@@ -870,39 +837,25 @@ func runDeleteNamedCommand(args []string) {
 	}
 	name := remaining[0]
 
-	headers := map[string]string{
-		"X-Customer-ID": *customerID,
-	}
+	headers := map[string]string{"X-Customer-ID": *customerID}
 
 	resp, err := doUDSRequestWithHeaders("POST", *udsPath, "/api/v1/delete-by-name/"+name, nil, headers)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "delete-named failed (%d): %s\n", resp.StatusCode, string(body))
-		if errCode := resp.Header.Get("BigBunny-Error-Code"); errCode != "" {
-			fmt.Fprintf(os.Stderr, "error code: %s\n", errCode)
-		}
-		os.Exit(1)
-	}
-
+	checkResponse(resp, "delete-named")
 	fmt.Println("deleted")
-
-	if warning := resp.Header.Get("BigBunny-Warning"); warning != "" {
-		fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
-	}
+	printWarning(resp)
 }
 
 func runLookupCommand(args []string) {
 	fs := flag.NewFlagSet("lookup", flag.ExitOnError)
 	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
 	customerID := fs.String("customer", "test-customer", "customer ID")
-	fs.Parse(args)
+	mustParseFlagSet(fs, args)
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
@@ -911,29 +864,19 @@ func runLookupCommand(args []string) {
 	}
 	name := remaining[0]
 
-	headers := map[string]string{
-		"X-Customer-ID": *customerID,
-	}
+	headers := map[string]string{"X-Customer-ID": *customerID}
 
 	resp, err := doUDSRequestWithHeaders("POST", *udsPath, "/api/v1/lookup-id-by-name/"+name, nil, headers)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
+
+	checkResponse(resp, "lookup")
 
 	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "lookup failed (%d): %s\n", resp.StatusCode, string(body))
-		if errCode := resp.Header.Get("BigBunny-Error-Code"); errCode != "" {
-			fmt.Fprintf(os.Stderr, "error code: %s\n", errCode)
-		}
-		os.Exit(1)
-	}
-
-	storeID := strings.TrimSpace(string(body))
-	fmt.Println(storeID)
+	fmt.Println(strings.TrimSpace(string(body)))
 }
 
 func runBeginModifyCommand(args []string) {
@@ -941,7 +884,7 @@ func runBeginModifyCommand(args []string) {
 	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
 	customerID := fs.String("customer", "test-customer", "customer ID")
 	showData := fs.Bool("data", false, "also print current data")
-	fs.Parse(args)
+	mustParseFlagSet(fs, args)
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
@@ -950,35 +893,25 @@ func runBeginModifyCommand(args []string) {
 	}
 	storeID := remaining[0]
 
-	headers := map[string]string{
-		"X-Customer-ID": *customerID,
-	}
+	headers := map[string]string{"X-Customer-ID": *customerID}
 
 	resp, err := doUDSRequestWithHeaders("POST", *udsPath, "/api/v1/begin-modify/"+storeID, nil, headers)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	body, _ := io.ReadAll(resp.Body)
+	checkResponse(resp, "begin-modify")
 
-	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "begin-modify failed (%d): %s\n", resp.StatusCode, string(body))
-		if errCode := resp.Header.Get("BigBunny-Error-Code"); errCode != "" {
-			fmt.Fprintf(os.Stderr, "error code: %s\n", errCode)
-		}
-		os.Exit(1)
-	}
-
-	lockID := resp.Header.Get("BigBunny-Lock-ID")
-	fmt.Println(lockID)
+	fmt.Println(resp.Header.Get("BigBunny-Lock-ID"))
 
 	if ttlStr := resp.Header.Get("BigBunny-Not-Valid-After"); ttlStr != "" {
 		fmt.Fprintf(os.Stderr, "TTL: %s seconds\n", ttlStr)
 	}
 
 	if *showData {
+		body, _ := io.ReadAll(resp.Body)
 		fmt.Fprintf(os.Stderr, "Data: %s\n", string(body))
 	}
 }
@@ -990,7 +923,7 @@ func runCompleteModifyCommand(args []string) {
 	lockID := fs.String("lock", "", "lock ID from begin-modify (required)")
 	ttl := fs.Int("ttl", 0, "new TTL in seconds (0 = keep existing)")
 	data := fs.String("data", "", "new store data (or read from stdin if empty)")
-	fs.Parse(args)
+	mustParseFlagSet(fs, args)
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
@@ -1004,17 +937,7 @@ func runCompleteModifyCommand(args []string) {
 		os.Exit(1)
 	}
 
-	var bodyData []byte
-	if *data != "" {
-		bodyData = []byte(*data)
-	} else {
-		var err error
-		bodyData, err = io.ReadAll(os.Stdin)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error reading stdin: %v\n", err)
-			os.Exit(1)
-		}
-	}
+	bodyData := readBodyData(*data)
 
 	headers := map[string]string{
 		"X-Customer-ID":    *customerID,
@@ -1029,23 +952,11 @@ func runCompleteModifyCommand(args []string) {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "complete-modify failed (%d): %s\n", resp.StatusCode, string(body))
-		if errCode := resp.Header.Get("BigBunny-Error-Code"); errCode != "" {
-			fmt.Fprintf(os.Stderr, "error code: %s\n", errCode)
-		}
-		os.Exit(1)
-	}
-
+	checkResponse(resp, "complete-modify")
 	fmt.Println("modified")
-
-	if warning := resp.Header.Get("BigBunny-Warning"); warning != "" {
-		fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
-	}
+	printWarning(resp)
 }
 
 func runCancelModifyCommand(args []string) {
@@ -1053,7 +964,7 @@ func runCancelModifyCommand(args []string) {
 	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
 	customerID := fs.String("customer", "test-customer", "customer ID")
 	lockID := fs.String("lock", "", "lock ID from begin-modify (required)")
-	fs.Parse(args)
+	mustParseFlagSet(fs, args)
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
@@ -1077,17 +988,8 @@ func runCancelModifyCommand(args []string) {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "cancel-modify failed (%d): %s\n", resp.StatusCode, string(body))
-		if errCode := resp.Header.Get("BigBunny-Error-Code"); errCode != "" {
-			fmt.Fprintf(os.Stderr, "error code: %s\n", errCode)
-		}
-		os.Exit(1)
-	}
-
+	checkResponse(resp, "cancel-modify")
 	fmt.Println("cancelled")
 }

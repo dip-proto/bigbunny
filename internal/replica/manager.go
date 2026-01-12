@@ -399,7 +399,7 @@ func (m *Manager) sendReplicationMessage(address string, msg *ReplicationMessage
 	if err != nil {
 		return fmt.Errorf("send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status: %d", resp.StatusCode)
@@ -461,7 +461,7 @@ func (m *Manager) sendHeartbeat(address string, hb *HeartbeatMessage) {
 	if err != nil {
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 }
 
 func (m *Manager) HandleHeartbeat(hb *HeartbeatMessage) *HeartbeatAck {
@@ -478,20 +478,21 @@ func (m *Manager) HandleHeartbeat(hb *HeartbeatMessage) *HeartbeatAck {
 		}
 		if hb.LeaderEpoch > m.leaderEpoch {
 			m.leaderEpoch = hb.LeaderEpoch
-			if m.role == RolePrimary {
+			switch m.role {
+			case RolePrimary:
 				log.Printf("demoting to JOINING: saw higher epoch %d from %s", hb.LeaderEpoch, hb.HostID)
 				m.role = RoleJoining
 				m.lastPromotionAt = time.Time{}
 				m.lastRecoveryAttempt = m.now()
 				go m.startRecoveryFromPeer(hb.HostID)
-			} else if m.role == RoleJoining {
+			case RoleJoining:
 				// Already JOINING - retry recovery if enough time has passed
 				if m.now().Sub(m.lastRecoveryAttempt) >= recoveryRetryInterval {
 					log.Printf("retrying recovery from %s (epoch %d)", hb.HostID, hb.LeaderEpoch)
 					m.lastRecoveryAttempt = m.now()
 					go m.startRecoveryFromPeer(hb.HostID)
 				}
-			} else {
+			default:
 				log.Printf("entering JOINING: saw higher epoch %d from %s", hb.LeaderEpoch, hb.HostID)
 				m.role = RoleJoining
 				m.lastRecoveryAttempt = m.now()
@@ -806,7 +807,7 @@ func (m *Manager) sendRegistryReplicationMessage(address string, msg *RegistryRe
 	if err != nil {
 		return fmt.Errorf("send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status: %d", resp.StatusCode)
@@ -1086,10 +1087,10 @@ func (m *Manager) discoverPrimary() string {
 			Role string `json:"role"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			continue
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if status.Role == "PRIMARY" {
 			return host.Address
@@ -1155,7 +1156,7 @@ func (m *Manager) doRecovery(primaryAddr string) {
 	// Apply tombstones: delete stores that were deleted on primary
 	m.resetTombstonesLocked(storeSnapshot.Tombstones)
 	for _, ts := range storeSnapshot.Tombstones {
-		m.store.ForceDelete(ts.StoreID)
+		_ = m.store.ForceDelete(ts.StoreID)
 	}
 	log.Printf("recovery: applied %d tombstones", len(storeSnapshot.Tombstones))
 
@@ -1188,7 +1189,7 @@ func (m *Manager) fetchStoreSnapshot(primaryAddr string) (*SnapshotData, error) 
 	if err != nil {
 		return nil, fmt.Errorf("send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
@@ -1221,7 +1222,7 @@ func (m *Manager) fetchRegistrySnapshot(primaryAddr string) (*RegistrySnapshotRe
 	if err != nil {
 		return nil, fmt.Errorf("send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
