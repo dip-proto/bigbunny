@@ -74,7 +74,7 @@ This is perfect for cases where you're just replacing the entire store contents 
 Sometimes you want to refer to a store by a memorable name instead of tracking an opaque encrypted identifier. That's what named stores are for. Let's create one for a shopping cart.
 
 ```bash
-./bbd create-named -data '{"items": []}' shopping-cart
+./bbd create --name shopping-cart --data '{"items": []}'
 ```
 
 You still get back a store ID, but now you can look it up later by name.

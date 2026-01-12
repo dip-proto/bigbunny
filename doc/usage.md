@@ -141,7 +141,7 @@ Sometimes you want to refer to a store by a name instead of tracking an opaque e
 Create a store with a name attached:
 
 ```bash
-./bbd create-named -data '{"items": []}' shopping-cart
+./bbd create --name shopping-cart --data '{"items": []}'
 ```
 
 You still get back a store ID, but now there's also a name mapping. The name is scoped to your customer ID, so different customers can use the same name without conflict.
@@ -149,7 +149,7 @@ You still get back a store ID, but now there's also a name mapping. The name is 
 If you try to create a named store that already exists, you'll get an error. But sometimes you want "get or create" semantics—use the existing store if it exists, create it if it doesn't. Add `--reuse` for that:
 
 ```bash
-./bbd create-named -reuse -data '{"default": true}' shopping-cart
+./bbd create --name shopping-cart --reuse --data '{"default": true}'
 ```
 
 If `shopping-cart` already exists, you get back its store ID. If not, a new store gets created with your data.
@@ -413,7 +413,7 @@ Implement a per-user rate limiter that allows 100 requests per minute:
 
 ```bash
 USER_ID="user123"
-COUNTER=$(./bbd create-named -data "0" -ttl 60 -reuse "${USER_ID}-rate-limit")
+COUNTER=$(./bbd create --name "${USER_ID}-rate-limit" --data "0" --ttl 60 --reuse)
 
 # On each request, increment the counter
 LOCK=$(./bbd begin-modify $COUNTER)
@@ -437,7 +437,7 @@ Maintain a shopping cart that persists across requests:
 
 ```bash
 USER_ID="user456"
-CART_ID=$(./bbd create-named -data '{"items":[]}' -ttl 86400 -reuse "${USER_ID}-cart")
+CART_ID=$(./bbd create --name "${USER_ID}-cart" --data '{"items":[]}' --ttl 86400 --reuse)
 
 # Add an item (this would be JSON manipulation in a real app)
 LOCK=$(./bbd begin-modify $CART_ID)

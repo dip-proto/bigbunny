@@ -40,9 +40,6 @@ func main() {
 		case "create":
 			runCreateCommand(os.Args[2:])
 			return
-		case "create-named":
-			runCreateNamedCommand(os.Args[2:])
-			return
 		case "get":
 			runGetCommand(os.Args[2:])
 			return
@@ -426,8 +423,7 @@ Ops commands:
   bbd release-lock [options] <store-id>    Force release a lock
 
 Store commands:
-  bbd create [options]                     Create an anonymous store
-  bbd create-named [options] <name>        Create a named store
+  bbd create [options]                     Create a blob store (anonymous or named)
   bbd get [options] <store-id>             Get store contents
   bbd delete [options] <store-id>          Delete a store by ID
   bbd delete-named [options] <name>        Delete a store by name
@@ -439,7 +435,7 @@ Modify commands:
   bbd cancel-modify [options] <store-id>   Cancel modify operation
 
 Counter commands:
-  bbd counter-create [options]             Create a counter store
+  bbd counter-create [options]             Create a counter store (anonymous or named)
   bbd counter-get [options] <store-id>     Get counter value
   bbd counter-increment [options] <store-id>  Increment counter
   bbd counter-decrement [options] <store-id>  Decrement counter
@@ -477,10 +473,7 @@ Status options:
 Create options:
   --ttl               TTL in seconds (0 = default 14 days)
   --data              Store data (or read from stdin)
-
-Create-named options:
-  --ttl               TTL in seconds (0 = default 14 days)
-  --data              Store data (or read from stdin)
+  --name              Optional name for named store
   --reuse             Reuse existing store if name exists
 
 Get options:
@@ -539,7 +532,7 @@ Examples:
   echo '{"key": "value"}' | bbd create
 
   # Create a named store
-  bbd create-named --data "session data" my-session
+  bbd create --name my-session --data "session data"
 
   # Get store contents
   bbd get --uds=/tmp/bbd.sock <store-id>
@@ -764,6 +757,8 @@ func runCreateCommand(args []string) {
 	customerID := fs.String("customer", "test-customer", "customer ID")
 	ttl := fs.Int("ttl", 0, "TTL in seconds (0 = default 14 days)")
 	data := fs.String("data", "", "store data (or read from stdin if empty)")
+	name := fs.String("name", "", "optional name for named store")
+	reuse := fs.Bool("reuse", false, "reuse existing store if name exists")
 	mustParseFlagSet(fs, args)
 
 	bodyData := readBodyData(*data)
@@ -772,8 +767,16 @@ func runCreateCommand(args []string) {
 	if *ttl > 0 {
 		headers["BigBunny-Not-Valid-After"] = fmt.Sprintf("%d", *ttl)
 	}
+	if *reuse {
+		headers["BigBunny-Reuse-If-Exists"] = "true"
+	}
 
-	resp, err := doUDSRequestWithHeaders("POST", *udsPath, "/api/v1/create", strings.NewReader(string(bodyData)), headers)
+	endpoint := "/api/v1/create"
+	if *name != "" {
+		endpoint = "/api/v1/create-by-name/" + *name
+	}
+
+	resp, err := doUDSRequestWithHeaders("POST", *udsPath, endpoint, strings.NewReader(string(bodyData)), headers)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -787,45 +790,6 @@ func runCreateCommand(args []string) {
 	printWarning(resp)
 }
 
-func runCreateNamedCommand(args []string) {
-	fs := flag.NewFlagSet("create-named", flag.ExitOnError)
-	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
-	customerID := fs.String("customer", "test-customer", "customer ID")
-	ttl := fs.Int("ttl", 0, "TTL in seconds (0 = default 14 days)")
-	data := fs.String("data", "", "store data (or read from stdin if empty)")
-	reuse := fs.Bool("reuse", false, "reuse existing store if name exists")
-	mustParseFlagSet(fs, args)
-
-	remaining := fs.Args()
-	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd create-named <name> [options]\n")
-		os.Exit(1)
-	}
-	name := remaining[0]
-
-	bodyData := readBodyData(*data)
-
-	headers := map[string]string{"X-Customer-ID": *customerID}
-	if *ttl > 0 {
-		headers["BigBunny-Not-Valid-After"] = fmt.Sprintf("%d", *ttl)
-	}
-	if *reuse {
-		headers["BigBunny-Reuse-If-Exists"] = "true"
-	}
-
-	resp, err := doUDSRequestWithHeaders("POST", *udsPath, "/api/v1/create-by-name/"+name, strings.NewReader(string(bodyData)), headers)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	checkResponse(resp, "create-named")
-
-	body, _ := io.ReadAll(resp.Body)
-	fmt.Println(strings.TrimSpace(string(body)))
-	printWarning(resp)
-}
 
 func runGetCommand(args []string) {
 	fs := flag.NewFlagSet("get", flag.ExitOnError)
