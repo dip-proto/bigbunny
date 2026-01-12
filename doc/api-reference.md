@@ -97,11 +97,9 @@ The errors you might encounter:
 
 - **404 Not Found** with error code `NotFound` means the store doesn't exist. Maybe it expired, maybe it was deleted, or maybe you have a typo in the store ID.
 
-- **403 Forbidden** with error code `Unauthorized` means the customer ID you provided doesn't match the customer who created the store. This is the cryptographic isolation at work—you literally cannot read another customer's data.
+- **400 Bad Request** (without a specific error code) means the store ID format is invalid or decryption failed. This includes attempting to access another customer's store—since store IDs are encrypted with customer-specific keys, using the wrong customer ID makes the store ID unreadable. This is the cryptographic isolation at work: you literally cannot access another customer's data, and the error looks identical to an invalid store ID to prevent information leakage.
 
 - **410 Gone** with error code `StoreExpired` means the store existed but its TTL has passed. The garbage collector will clean it up eventually, but for now, it's considered gone.
-
-- **400 Bad Request** (without a specific error code) means the store ID format is invalid or decryption failed. This usually indicates a bug in how you're constructing or storing the ID.
 
 ## Updating Stores
 
@@ -452,33 +450,39 @@ You get back a JSON object with lots of useful information:
 
 ```json
 {
-  "node_id": "node1",
-  "role": "primary",
-  "epoch": 3,
-  "store_count": 142,
-  "used_bytes": 581632,
-  "memory_limit": 4294967296,
-  "peers": ["node2@localhost:8082"],
+  "host_id": "node1",
+  "role": "PRIMARY",
+  "leader_epoch": 1,
+  "last_leader_seen": "2.021107375s",
+  "store_count": 2,
+  "memory_usage": 521,
+  "tombstone_count": 0,
+  "peers": {},
   "queue_length": 0,
+  "registry_count": 0,
   "registry_queue_length": 0,
+  "registry_states": {},
   "replication_fail_count": 0,
-  "last_replication_fail": null
+  "last_replication_fail": ""
 }
 ```
 
 Here's what each field means:
 
-- **node_id**: The identifier for this node (from `--host-id` flag)
-- **role**: One of `primary`, `secondary`, or `joining`. Primary handles writes, secondary replicates and can handle reads, joining means the node is recovering after a restart.
-- **epoch**: A monotonically increasing counter that increments on every failover. Useful for detecting split-brain—if two nodes both claim to be primary, the one with the higher epoch wins.
+- **host_id**: The identifier for this node (from `--host-id` flag).
+- **role**: One of `PRIMARY`, `SECONDARY`, or `JOINING`. Primary handles writes, secondary replicates and can handle reads, joining means the node is recovering after a restart.
+- **leader_epoch**: A monotonically increasing counter that increments on every failover. Useful for detecting split-brain—if two nodes both claim to be primary, the one with the higher epoch wins.
+- **last_leader_seen**: How long ago the last leader heartbeat was seen.
 - **store_count**: How many stores are currently in memory on this node.
-- **used_bytes**: Total memory used by store bodies and metadata.
-- **memory_limit**: The configured memory limit (from `--memory-limit` flag). Zero means unlimited.
-- **peers**: The list of peer nodes in the cluster.
+- **memory_usage**: Total memory used by store bodies and metadata.
+- **tombstone_count**: Number of tombstones (deleted stores retained to prevent resurrection).
+- **peers**: Object mapping peer node IDs to how long since their last heartbeat.
 - **queue_length**: How many store replication messages are queued waiting to be sent to the secondary. This should usually be zero or low single digits. If it grows, replication is falling behind.
+- **registry_count**: Number of entries in the name registry.
 - **registry_queue_length**: Same as queue_length but for name registry replication messages.
+- **registry_states**: Breakdown of registry entries by state (active, creating).
 - **replication_fail_count**: How many consecutive replication attempts have failed. If this is non-zero and growing, something is wrong with the secondary.
-- **last_replication_fail**: How many seconds ago the last replication failure happened. Useful for debugging replication issues.
+- **last_replication_fail**: How long ago the last replication failure happened. Empty string if no recent failures. Useful for debugging replication issues.
 
 In production, you'd poll this endpoint regularly and export the metrics to your monitoring system. Watch the role (to detect split-brain or missing primary), the epoch (to detect frequent failovers), the memory usage (to predict when you'll hit capacity), and the queue depths (to detect replication lag).
 
