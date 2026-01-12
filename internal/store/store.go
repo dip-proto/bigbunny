@@ -712,7 +712,7 @@ func (m *Manager) CreateCounter(id, shardID, customerID string, initialValue int
 // - Increments the version and queues replication
 //
 // The operation is atomic and thread-safe without exposing locks to the client.
-func (m *Manager) Increment(storeID, customerID string, delta int64, leaderEpoch uint64) (*CounterResult, error) {
+func (m *Manager) Increment(storeID, customerID string, delta int64, leaderEpoch uint64, newExpiresAt time.Time) (*CounterResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -776,6 +776,9 @@ func (m *Manager) Increment(storeID, customerID string, delta int64, leaderEpoch
 	s.Body = newBody
 	s.Version++
 	s.LeaderEpoch = leaderEpoch
+	if !newExpiresAt.IsZero() {
+		s.ExpiresAt = newExpiresAt
+	}
 	newSize := storeSize(s)
 	m.usedBytes += newSize - oldSize
 
@@ -823,7 +826,7 @@ func (m *Manager) GetCounter(storeID, customerID string) (*CounterData, uint64, 
 // SetCounter sets a counter to a specific value.
 // Validates the value is within bounds if present.
 // Returns ErrTypeMismatch if the store is not a counter.
-func (m *Manager) SetCounter(storeID, customerID string, value int64) (uint64, error) {
+func (m *Manager) SetCounter(storeID, customerID string, value int64, newExpiresAt time.Time) (uint64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -866,6 +869,9 @@ func (m *Manager) SetCounter(storeID, customerID string, value int64) (uint64, e
 	oldSize := storeSize(s)
 	s.Body = newBody
 	s.Version++
+	if !newExpiresAt.IsZero() {
+		s.ExpiresAt = newExpiresAt
+	}
 	newSize := storeSize(s)
 	m.usedBytes += newSize - oldSize
 

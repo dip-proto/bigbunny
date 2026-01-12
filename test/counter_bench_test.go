@@ -15,7 +15,7 @@ func BenchmarkCounterIncrement(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		mgr.Increment(s.ID, "cust1", 1, 1)
+		mgr.Increment(s.ID, "cust1", 1, 1, time.Time{})
 	}
 }
 
@@ -53,7 +53,7 @@ func BenchmarkCounterIncrementParallel(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			mgr.Increment(s.ID, "cust1", 1, 1)
+			mgr.Increment(s.ID, "cust1", 1, 1, time.Time{})
 		}
 	})
 }
@@ -67,6 +67,6 @@ func BenchmarkCounterWithBounds(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		mgr.Increment(s.ID, "cust1", 1, 1)
+		mgr.Increment(s.ID, "cust1", 1, 1, time.Time{})
 	}
 }

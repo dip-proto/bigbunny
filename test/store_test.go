@@ -572,7 +572,7 @@ func TestCounterCreateAndIncrement(t *testing.T) {
 	}
 
 	// Increment by 5
-	result, err := mgr.Increment("counter1", "cust1", 5, 1)
+	result, err := mgr.Increment("counter1", "cust1", 5, 1, time.Time{})
 	if err != nil {
 		t.Fatalf("increment failed: %v", err)
 	}
@@ -589,7 +589,7 @@ func TestCounterCreateAndIncrement(t *testing.T) {
 	}
 
 	// Decrement (negative delta)
-	result, err = mgr.Increment("counter1", "cust1", -3, 1)
+	result, err = mgr.Increment("counter1", "cust1", -3, 1, time.Time{})
 	if err != nil {
 		t.Fatalf("decrement failed: %v", err)
 	}
@@ -609,7 +609,7 @@ func TestCounterWithBounds(t *testing.T) {
 	}
 
 	// Increment within bounds
-	result, err := mgr.Increment("counter1", "cust1", 30, 1)
+	result, err := mgr.Increment("counter1", "cust1", 30, 1, time.Time{})
 	if err != nil {
 		t.Fatalf("increment failed: %v", err)
 	}
@@ -618,7 +618,7 @@ func TestCounterWithBounds(t *testing.T) {
 	}
 
 	// Increment beyond max - should clamp to 100
-	result, err = mgr.Increment("counter1", "cust1", 50, 1)
+	result, err = mgr.Increment("counter1", "cust1", 50, 1, time.Time{})
 	if err != nil {
 		t.Fatalf("increment failed: %v", err)
 	}
@@ -630,7 +630,7 @@ func TestCounterWithBounds(t *testing.T) {
 	}
 
 	// Decrement below min - should clamp to 0
-	result, err = mgr.Increment("counter1", "cust1", -150, 1)
+	result, err = mgr.Increment("counter1", "cust1", -150, 1, time.Time{})
 	if err != nil {
 		t.Fatalf("decrement failed: %v", err)
 	}
@@ -681,7 +681,7 @@ func TestCounterOverflow(t *testing.T) {
 	}
 
 	// Try to increment beyond MaxInt64
-	_, err = mgr.Increment("counter1", "cust1", 1000, 1)
+	_, err = mgr.Increment("counter1", "cust1", 1000, 1, time.Time{})
 	if err != store.ErrOverflow {
 		t.Errorf("expected ErrOverflow, got %v", err)
 	}
@@ -697,7 +697,7 @@ func TestCounterUnderflow(t *testing.T) {
 	}
 
 	// Try to decrement beyond MinInt64
-	_, err = mgr.Increment("counter1", "cust1", -1000, 1)
+	_, err = mgr.Increment("counter1", "cust1", -1000, 1, time.Time{})
 	if err != store.ErrOverflow {
 		t.Errorf("expected ErrOverflow, got %v", err)
 	}
@@ -717,7 +717,7 @@ func TestCounterTypeMismatch(t *testing.T) {
 	mgr.Create(blob)
 
 	// Try to increment blob store
-	_, err := mgr.Increment("blob1", "cust1", 5, 1)
+	_, err := mgr.Increment("blob1", "cust1", 5, 1, time.Time{})
 	if err != store.ErrTypeMismatch {
 		t.Errorf("expected ErrTypeMismatch, got %v", err)
 	}
@@ -738,7 +738,7 @@ func TestCounterLockedStore(t *testing.T) {
 	}
 
 	// Try to increment locked counter - should fail
-	_, err = mgr.Increment("counter1", "cust1", 5, 1)
+	_, err = mgr.Increment("counter1", "cust1", 5, 1, time.Time{})
 	if err != store.ErrStoreLocked {
 		t.Errorf("expected ErrStoreLocked, got %v", err)
 	}
@@ -747,7 +747,7 @@ func TestCounterLockedStore(t *testing.T) {
 	mgr.ReleaseLock("counter1", "cust1", "lock1")
 
 	// Now increment should work
-	result, err := mgr.Increment("counter1", "cust1", 5, 1)
+	result, err := mgr.Increment("counter1", "cust1", 5, 1, time.Time{})
 	if err != nil {
 		t.Fatalf("increment after unlock failed: %v", err)
 	}
@@ -796,7 +796,7 @@ func TestCounterSetCounter(t *testing.T) {
 	}
 
 	// Set to valid value
-	version, err := mgr.SetCounter("counter1", "cust1", 75)
+	version, err := mgr.SetCounter("counter1", "cust1", 75, time.Time{})
 	if err != nil {
 		t.Fatalf("set counter failed: %v", err)
 	}
@@ -814,12 +814,12 @@ func TestCounterSetCounter(t *testing.T) {
 	}
 
 	// Try to set out of bounds
-	_, err = mgr.SetCounter("counter1", "cust1", 150)
+	_, err = mgr.SetCounter("counter1", "cust1", 150, time.Time{})
 	if err != store.ErrValueOutOfBounds {
 		t.Errorf("expected ErrValueOutOfBounds, got %v", err)
 	}
 
-	_, err = mgr.SetCounter("counter1", "cust1", -10)
+	_, err = mgr.SetCounter("counter1", "cust1", -10, time.Time{})
 	if err != store.ErrValueOutOfBounds {
 		t.Errorf("expected ErrValueOutOfBounds, got %v", err)
 	}
@@ -838,7 +838,7 @@ func TestCounterConcurrentIncrements(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func() {
 			for j := 0; j < 10; j++ {
-				mgr.Increment("counter1", "cust1", 1, 1)
+				mgr.Increment("counter1", "cust1", 1, 1, time.Time{})
 			}
 			done <- true
 		}()

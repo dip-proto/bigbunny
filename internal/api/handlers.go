@@ -1015,7 +1015,10 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		version, err := s.store.SetCounter(storeID, customerID, req.Value)
+		// Parse optional TTL header
+		newExpiresAt := s.parseExpiresAtHeader(r, now)
+
+		version, err := s.store.SetCounter(storeID, customerID, req.Value, newExpiresAt)
 		if err != nil {
 			writeHTTPError(w, err, "failed to set counter")
 			return
@@ -1613,6 +1616,8 @@ func (s *Server) handleRegistryDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleIncrement(w http.ResponseWriter, r *http.Request) {
+	now := time.Now()
+
 	if !s.requirePrimary(w, r) {
 		return
 	}
@@ -1646,8 +1651,11 @@ func (s *Server) handleIncrement(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse optional TTL header
+	newExpiresAt := s.parseExpiresAtHeader(r, now)
+
 	// Perform atomic increment
-	result, err := s.store.Increment(storeID, customerID, req.Delta, s.replica.LeaderEpoch())
+	result, err := s.store.Increment(storeID, customerID, req.Delta, s.replica.LeaderEpoch(), newExpiresAt)
 	if err != nil {
 		writeHTTPError(w, err, "failed to increment counter")
 		return
@@ -1683,6 +1691,8 @@ func (s *Server) handleIncrement(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDecrement(w http.ResponseWriter, r *http.Request) {
+	now := time.Now()
+
 	if !s.requirePrimary(w, r) {
 		return
 	}
@@ -1716,8 +1726,11 @@ func (s *Server) handleDecrement(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse optional TTL header
+	newExpiresAt := s.parseExpiresAtHeader(r, now)
+
 	// Decrement is just increment with negative delta
-	result, err := s.store.Increment(storeID, customerID, -req.Delta, s.replica.LeaderEpoch())
+	result, err := s.store.Increment(storeID, customerID, -req.Delta, s.replica.LeaderEpoch(), newExpiresAt)
 	if err != nil {
 		writeHTTPError(w, err, "failed to decrement counter")
 		return
