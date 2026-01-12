@@ -90,6 +90,10 @@ func NewServer(cfg *Config, storeMgr *store.Manager, replicaMgr *replica.Manager
 	}
 }
 
+func (s *Server) Shutdown() {
+	s.forwardingClient.CloseIdleConnections()
+}
+
 func (s *Server) openStoreID(storeID, customerID string) (*auth.StoreIDComponents, error) {
 	return s.cipher.Open(storeID, customerID)
 }
@@ -222,6 +226,8 @@ func (s *Server) requirePrimary(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
+	now := time.Now()
+
 	if !s.requirePrimary(w, r) {
 		return
 	}
@@ -237,7 +243,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ttl := s.parseTTLHeader(r)
-	expiresAt := time.Now().Add(ttl)
+	expiresAt := now.Add(ttl)
 
 	// Try to parse as JSON CreateRequest
 	var req CreateRequest
@@ -325,6 +331,8 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateByName(w http.ResponseWriter, r *http.Request) {
+	now := time.Now()
+
 	if !s.requirePrimary(w, r) {
 		return
 	}
@@ -446,7 +454,7 @@ func (s *Server) handleCreateByName(w http.ResponseWriter, r *http.Request) {
 				initialValue,
 				createReq.Min,
 				createReq.Max,
-				time.Now().Add(ttl),
+				now.Add(ttl),
 				s.replica.LeaderEpoch(),
 			)
 			if err != nil {
@@ -476,7 +484,7 @@ func (s *Server) handleCreateByName(w http.ResponseWriter, r *http.Request) {
 			CustomerID:  customerID,
 			DataType:    store.DataTypeBlob,
 			Body:        body,
-			ExpiresAt:   time.Now().Add(ttl),
+			ExpiresAt:   now.Add(ttl),
 			Version:     1,
 			LeaderEpoch: s.replica.LeaderEpoch(),
 			Role:        store.RolePrimary,
@@ -863,6 +871,8 @@ func (s *Server) handleBeginModify(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCompleteModify(w http.ResponseWriter, r *http.Request) {
+	now := time.Now()
+
 	if !s.requirePrimary(w, r) {
 		return
 	}
@@ -894,7 +904,7 @@ func (s *Server) handleCompleteModify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newExpiresAt := s.parseExpiresAtHeader(r)
+	newExpiresAt := s.parseExpiresAtHeader(r, now)
 
 	updated, err := s.store.CompleteLock(storeID, customerID, lockID, body, newExpiresAt)
 	if err != nil {
@@ -961,6 +971,8 @@ func (s *Server) handleCancelModify(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
+	now := time.Now()
+
 	if !s.requirePrimary(w, r) {
 		return
 	}
@@ -1039,7 +1051,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newExpiresAt := s.parseExpiresAtHeader(r)
+	newExpiresAt := s.parseExpiresAtHeader(r, now)
 
 	updated, err := s.store.CompleteLock(storeID, customerID, lockID, body, newExpiresAt)
 	if err != nil {
@@ -1276,10 +1288,10 @@ func (s *Server) parseTTLHeader(r *http.Request) time.Duration {
 	return s.config.DefaultTTL
 }
 
-func (s *Server) parseExpiresAtHeader(r *http.Request) time.Time {
+func (s *Server) parseExpiresAtHeader(r *http.Request, now time.Time) time.Time {
 	if ttlHeader := r.Header.Get("BigBunny-Not-Valid-After"); ttlHeader != "" {
 		if secs, err := strconv.ParseInt(ttlHeader, 10, 64); err == nil {
-			return time.Now().Add(time.Duration(secs) * time.Second)
+			return now.Add(time.Duration(secs) * time.Second)
 		}
 	}
 	return time.Time{}
