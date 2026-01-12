@@ -182,6 +182,9 @@ For production, you'll also want these:
 --store-key-current=0            # Current key ID
 --internal-token="secret"        # Internal endpoint auth
 --memory-limit=4294967296        # 4GB memory cap
+--customer-memory-quota=104857600 # 100MB per customer
+--tombstone-customer-limit=1000  # Prevent rapid delete attacks
+--tombstone-global-limit=10000   # Global tombstone cap
 ```
 
 And for a two-node cluster, add the peer:
@@ -206,7 +209,9 @@ Big Bunny uses AES-128-SIV to encrypt store IDs, with per-customer key derivatio
 
 Internal replication endpoints require authentication via a shared token, though the current implementation doesn't encrypt the traffic (you should run on a trusted private network). The Unix socket's file permissions control who can access the local API.
 
-Best practices include generating strong random keys, rotating them every 90 days, using a secrets manager for storage, deploying on private networks, running as a non-root user, and restricting socket permissions to mode 0600. The [Security](security.md) document has the full threat analysis and detailed guidance.
+Resource exhaustion protection includes per-customer rate limiting, per-customer memory quotas, tombstone limits to prevent rapid create/delete attacks, and configurable HTTP timeouts to defend against Slowloris-style attacks.
+
+Best practices include generating strong random keys, rotating them every 90 days, using a secrets manager for storage, deploying on private networks, running as a non-root user, restricting socket permissions to mode 0600, and enabling resource exhaustion protections in production. The [Security](security.md) document has the full threat analysis and detailed guidance.
 
 ## Trade-Offs and Limitations
 
