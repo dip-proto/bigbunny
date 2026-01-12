@@ -992,13 +992,13 @@ func runCompleteModifyCommand(args []string) {
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd complete-modify <store-id> --lock <lock-id> [options]\n")
+		fmt.Fprintf(os.Stderr, "usage: bbd complete-modify <store-id> -lock <lock-id> [options]\n")
 		os.Exit(1)
 	}
 	storeID := remaining[0]
 
 	if *lockID == "" {
-		fmt.Fprintf(os.Stderr, "error: --lock is required\n")
+		fmt.Fprintf(os.Stderr, "error: -lock is required\n")
 		os.Exit(1)
 	}
 
@@ -1033,13 +1033,13 @@ func runCancelModifyCommand(args []string) {
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd cancel-modify <store-id> --lock <lock-id> [options]\n")
+		fmt.Fprintf(os.Stderr, "usage: bbd cancel-modify <store-id> -lock <lock-id> [options]\n")
 		os.Exit(1)
 	}
 	storeID := remaining[0]
 
 	if *lockID == "" {
-		fmt.Fprintf(os.Stderr, "error: --lock is required\n")
+		fmt.Fprintf(os.Stderr, "error: -lock is required\n")
 		os.Exit(1)
 	}
 
@@ -1065,8 +1065,8 @@ func runCounterCreateCommand(args []string) {
 	customerID := fs.String("customer", "test-customer", "customer ID")
 	ttl := fs.Int("ttl", 0, "TTL in seconds (0 = default 14 days)")
 	value := fs.Int64("value", 0, "initial counter value")
-	min := fs.Int64("min", 0, "minimum value (use --with-min to set)")
-	max := fs.Int64("max", 0, "maximum value (use --with-max to set)")
+	min := fs.Int64("min", 0, "minimum value (use -with-min to set)")
+	max := fs.Int64("max", 0, "maximum value (use -with-max to set)")
 	withMin := fs.Bool("with-min", false, "enable minimum bound")
 	withMax := fs.Bool("with-max", false, "enable maximum bound")
 	name := fs.String("name", "", "optional name for named counter")
@@ -1163,7 +1163,7 @@ func runCounterIncrementCommand(args []string) {
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd counter-increment <store-id> [--delta N] [options]\n")
+		fmt.Fprintf(os.Stderr, "usage: bbd counter-increment <store-id> [-delta N] [options]\n")
 		os.Exit(1)
 	}
 	storeID := remaining[0]
@@ -1207,7 +1207,7 @@ func runCounterDecrementCommand(args []string) {
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd counter-decrement <store-id> [--delta N] [options]\n")
+		fmt.Fprintf(os.Stderr, "usage: bbd counter-decrement <store-id> [-delta N] [options]\n")
 		os.Exit(1)
 	}
 	storeID := remaining[0]
@@ -1251,7 +1251,7 @@ func runCounterSetCommand(args []string) {
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd counter-set <store-id> --value N [options]\n")
+		fmt.Fprintf(os.Stderr, "usage: bbd counter-set <store-id> -value N [options]\n")
 		os.Exit(1)
 	}
 	storeID := remaining[0]
