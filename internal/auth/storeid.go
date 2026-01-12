@@ -173,7 +173,7 @@ func DevKeySet() *KeySet {
 	}
 }
 
-func (ks *KeySet) deriveKey(keyID, site, customerID string) ([]byte, error) {
+func (ks *KeySet) deriveKey(keyID, site, customerID string, includeSite bool) ([]byte, error) {
 	master, ok := ks.keys[keyID]
 	if !ok {
 		return nil, ErrUnknownKeyID
@@ -181,7 +181,13 @@ func (ks *KeySet) deriveKey(keyID, site, customerID string) ([]byte, error) {
 
 	// Include site in key derivation to cryptographically bind store IDs to their site.
 	// A store ID from site-A will fail to decrypt on site-B even with the same master key.
-	info := []byte(KeyInfoPrefix + site + ":" + customerID)
+	// When includeSite is false, site is omitted for cross-site compatibility.
+	var info []byte
+	if includeSite {
+		info = []byte(KeyInfoPrefix + site + ":" + customerID)
+	} else {
+		info = []byte(KeyInfoPrefix + customerID)
+	}
 	reader := hkdf.New(sha256.New, master, nil, info)
 	key := make([]byte, KeySize)
 	if _, err := io.ReadFull(reader, key); err != nil {
@@ -197,14 +203,31 @@ func (ks *KeySet) CurrentKeyID() string {
 }
 
 type cipherImpl struct {
-	keySet *KeySet
+	keySet                  *KeySet
+	disableSiteVerification bool
+}
+
+// CipherOption configures optional cipher behavior.
+type CipherOption func(*cipherImpl)
+
+// WithDisableSiteVerification returns an option that disables site verification
+// in key derivation. When enabled, the site is not included in HKDF, allowing
+// store IDs to be used across different sites.
+func WithDisableSiteVerification() CipherOption {
+	return func(c *cipherImpl) {
+		c.disableSiteVerification = true
+	}
 }
 
 // NewCipher creates a StoreIDCipher that uses the provided key set for
 // encrypting and decrypting store IDs. The cipher handles per-customer
 // key derivation internally.
-func NewCipher(ks *KeySet) StoreIDCipher {
-	return &cipherImpl{keySet: ks}
+func NewCipher(ks *KeySet, opts ...CipherOption) StoreIDCipher {
+	c := &cipherImpl{keySet: ks}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 func (c *cipherImpl) Seal(site, shardID, unique, customerID string) (string, error) {
@@ -222,7 +245,8 @@ func (c *cipherImpl) Seal(site, shardID, unique, customerID string) (string, err
 	}
 
 	keyID := c.keySet.currentID
-	derivedKey, err := c.keySet.deriveKey(keyID, site, customerID)
+	includeSite := !c.disableSiteVerification
+	derivedKey, err := c.keySet.deriveKey(keyID, site, customerID, includeSite)
 	if err != nil {
 		return "", err
 	}
@@ -271,7 +295,9 @@ func (c *cipherImpl) Open(storeID, expectedSite, customerID string) (*StoreIDCom
 	}
 
 	// Use expectedSite in key derivation - this cryptographically binds the store ID to its site
-	derivedKey, err := c.keySet.deriveKey(keyID, expectedSite, customerID)
+	// When site verification is disabled, site is not included in HKDF for cross-site compatibility
+	includeSite := !c.disableSiteVerification
+	derivedKey, err := c.keySet.deriveKey(keyID, expectedSite, customerID, includeSite)
 	if err != nil {
 		return nil, ErrInvalidStoreID
 	}
@@ -298,7 +324,8 @@ func (c *cipherImpl) Open(storeID, expectedSite, customerID string) (*StoreIDCom
 	unique := plaintextParts[2]
 
 	// Verify the decrypted site matches expected (defense in depth)
-	if site != expectedSite {
+	// Skip this check when site verification is disabled
+	if !c.disableSiteVerification && site != expectedSite {
 		return nil, ErrInvalidStoreID
 	}
 

@@ -58,6 +58,9 @@ type Config struct {
 	TombstonePerCustomerLimit int // max tombstones per customer
 	TombstoneGlobalLimit      int // max tombstones globally
 
+	// Site verification
+	DisableSiteVerification bool // if true, allow replication between nodes with different sites
+
 	// Testing hooks (optional)
 	HTTPClient           *http.Client     // custom client for network simulation; nil = default
 	Now                  func() time.Time // custom clock for deterministic tests; nil = time.Now
@@ -477,13 +480,14 @@ func (m *Manager) sendHeartbeat(address string, hb *HeartbeatMessage) {
 }
 
 // HandleHeartbeat processes an incoming heartbeat from another node and may trigger role changes or recovery if a higher epoch is seen.
-// Returns ErrSiteMismatch if the peer's site doesn't match ours.
+// Returns ErrSiteMismatch if the peer's site doesn't match ours (unless site verification is disabled).
 func (m *Manager) HandleHeartbeat(hb *HeartbeatMessage) (*HeartbeatAck, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	// Validate site match - reject heartbeats from peers in different sites
-	if hb.Site != "" && hb.Site != m.config.Site {
+	// Skip this check if site verification is disabled
+	if !m.config.DisableSiteVerification && hb.Site != "" && hb.Site != m.config.Site {
 		log.Printf("rejecting heartbeat from %s: site mismatch (theirs=%q, ours=%q)", hb.HostID, hb.Site, m.config.Site)
 		return nil, ErrSiteMismatch
 	}
@@ -1195,8 +1199,8 @@ func (m *Manager) doRecovery(primaryAddr string) {
 		return
 	}
 
-	// Reject snapshots from nodes in different sites
-	if storeSnapshot.Site != "" && storeSnapshot.Site != m.config.Site {
+	// Reject snapshots from nodes in different sites (unless site verification is disabled)
+	if !m.config.DisableSiteVerification && storeSnapshot.Site != "" && storeSnapshot.Site != m.config.Site {
 		log.Printf("recovery: rejecting snapshot from %s: site mismatch (theirs=%q, ours=%q)",
 			primaryAddr, storeSnapshot.Site, m.config.Site)
 		m.recoveryFailed()

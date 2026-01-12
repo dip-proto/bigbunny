@@ -111,6 +111,7 @@ func main() {
 		httpWriteTimeout          = flag.Duration("http-write-timeout", 30*time.Second, "HTTP write timeout")
 		httpIdleTimeout           = flag.Duration("http-idle-timeout", 120*time.Second, "HTTP idle timeout")
 		httpMaxHeaderBytes        = flag.Int("http-max-header-bytes", 1<<20, "HTTP max header bytes (1MB default)")
+		disableSiteVerification   = flag.Bool("disable-site-verification", false, "disable site verification (allows cross-site replication)")
 	)
 	flag.Parse()
 
@@ -168,7 +169,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to parse store keys: %v", err)
 	}
-	cipher := auth.NewCipher(keySet)
+	var cipherOpts []auth.CipherOption
+	if *disableSiteVerification {
+		cipherOpts = append(cipherOpts, auth.WithDisableSiteVerification())
+		log.Printf("WARNING: site verification disabled (cross-site replication allowed)")
+	}
+	cipher := auth.NewCipher(keySet, cipherOpts...)
 	if *storeKeys == "dev" {
 		log.Printf("WARNING: using dev mode encryption keys (not for production)")
 	} else {
@@ -214,6 +220,7 @@ func main() {
 	replicaCfg.InternalToken = *internalToken
 	replicaCfg.TombstonePerCustomerLimit = *tombstonePerCustomerLimit
 	replicaCfg.TombstoneGlobalLimit = *tombstoneGlobalLimit
+	replicaCfg.DisableSiteVerification = *disableSiteVerification
 	replicaMgr := replica.NewManager(replicaCfg, storeMgr, hasher)
 
 	// Log tombstone limits if configured
@@ -495,6 +502,7 @@ Daemon flags:
   --burst-size        Burst capacity per customer (default: 200)
   --tombstone-customer-limit  Max tombstones per customer (default: 0 = no limit)
   --tombstone-global-limit    Max tombstones globally (default: 0 = no limit)
+  --disable-site-verification Disable site verification (allows cross-site replication)
   --http-read-timeout         HTTP read timeout (default: 30s)
   --http-read-header-timeout  HTTP read header timeout (default: 10s)
   --http-write-timeout        HTTP write timeout (default: 30s)
