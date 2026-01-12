@@ -53,7 +53,8 @@ For a complete walkthrough, see the [Quick Start Guide](doc/quickstart.md).
 - **Encrypted Store IDs** — AES-128-SIV encryption provides security and customer isolation
 - **Named Stores** — Optional human-readable names instead of opaque IDs
 - **TTL Management** — Automatic expiration and garbage collection
-- **Per-Customer Rate Limiting** — Token bucket algorithm prevents resource exhaustion
+- **Per-Customer Rate Limiting** — Token bucket algorithm prevents request flooding
+- **Resource Exhaustion Protection** — HTTP timeouts, customer memory quotas, and tombstone limits
 - **Unix Socket API** — Local access with filesystem-based permission control
 
 Choose Big Bunny when your data is ephemeral, small (a few KB), and disposable, and when you want maximum performance with minimal operational complexity rather than long-term persistence, large datasets, or multi-region clustering.
@@ -106,7 +107,9 @@ TOKEN=$(openssl rand -hex 16)
   --routing-secret="$ROUTING_SECRET" \
   --internal-token="$TOKEN" \
   --memory-limit=4294967296 \
-  --rate-limit=100 --burst-size=200
+  --customer-memory-quota=104857600 \
+  --rate-limit=100 --burst-size=200 \
+  --tombstone-customer-limit=1000 --tombstone-global-limit=10000
 
 # Node 2 (becomes secondary)
 ./bbd --host-id=node2 --tcp=:8082 --uds=/var/run/bbd/bbd.sock \
@@ -115,7 +118,9 @@ TOKEN=$(openssl rand -hex 16)
   --routing-secret="$ROUTING_SECRET" \
   --internal-token="$TOKEN" \
   --memory-limit=4294967296 \
-  --rate-limit=100 --burst-size=200
+  --customer-memory-quota=104857600 \
+  --rate-limit=100 --burst-size=200 \
+  --tombstone-customer-limit=1000 --tombstone-global-limit=10000
 ```
 
 The [Installation Guide](doc/installation.md) covers building from source, managing secrets, and configuring systemd. The [Operations Guide](doc/operations.md) explains monitoring, capacity planning, and troubleshooting.
@@ -223,6 +228,7 @@ These trade-offs make Big Bunny fast and simple to operate. If you need durabili
 | Replication lag  | <100ms  | Typical under normal load        |
 | Rate limit       | 100/s   | Per customer (default, tunable)  |
 | Burst capacity   | 200     | Per customer (default, tunable)  |
+| HTTP timeout     | 30s     | Read/write (configurable)        |
 
 ## Security
 
@@ -235,6 +241,7 @@ Best practices:
 - Run on private networks
 - Use restrictive Unix socket permissions (0600)
 - Run as a non-root user
+- Enable resource exhaustion protections in production (memory quotas, tombstone limits)
 
 See the [Security Guide](doc/security.md) for the complete threat analysis.
 
