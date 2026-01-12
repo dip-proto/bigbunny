@@ -359,7 +359,7 @@ func TestCluster_CounterRecovery(t *testing.T) {
 // Helper functions
 
 func createCounter(t *testing.T, addr, customerID string, value int64, min, max *int64) string {
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"type":  "counter",
 		"value": value,
 	}
@@ -394,7 +394,7 @@ func createCounter(t *testing.T, addr, customerID string, value int64, min, max 
 }
 
 func incrementCounter(t *testing.T, addr, storeID, customerID string, delta int64) *api.CounterResponse {
-	reqBody := map[string]interface{}{"delta": delta}
+	reqBody := map[string]any{"delta": delta}
 	bodyBytes, _ := json.Marshal(reqBody)
 
 	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s/api/v1/increment/%s", addr, storeID), bytes.NewReader(bodyBytes))

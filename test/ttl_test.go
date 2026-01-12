@@ -259,7 +259,7 @@ func TestTTLOnCounterOperations(t *testing.T) {
 
 	t.Run("IncrementWithHeader_ResetsTTL", func(t *testing.T) {
 		// Create counter
-		createBody, _ := json.Marshal(map[string]interface{}{
+		createBody, _ := json.Marshal(map[string]any{
 			"type":  "counter",
 			"value": 0,
 		})
@@ -315,7 +315,7 @@ func TestTTLOnCounterOperations(t *testing.T) {
 
 	t.Run("IncrementWithoutHeader_PreservesTTL", func(t *testing.T) {
 		// Create counter
-		createBody, _ := json.Marshal(map[string]interface{}{
+		createBody, _ := json.Marshal(map[string]any{
 			"type":  "counter",
 			"value": 10,
 		})
@@ -361,7 +361,7 @@ func TestTTLOnCounterOperations(t *testing.T) {
 
 	t.Run("DecrementWithHeader_ResetsTTL", func(t *testing.T) {
 		// Create counter
-		createBody, _ := json.Marshal(map[string]interface{}{
+		createBody, _ := json.Marshal(map[string]any{
 			"type":  "counter",
 			"value": 100,
 		})
@@ -414,7 +414,7 @@ func TestTTLOnCounterOperations(t *testing.T) {
 
 	t.Run("SetCounterWithHeader_ResetsTTL", func(t *testing.T) {
 		// Create counter
-		createBody, _ := json.Marshal(map[string]interface{}{
+		createBody, _ := json.Marshal(map[string]any{
 			"type":  "counter",
 			"value": 50,
 		})

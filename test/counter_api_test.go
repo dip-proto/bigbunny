@@ -57,7 +57,7 @@ func TestAPICounterCreate(t *testing.T) {
 	// Create counter with bounds
 	min := int64(0)
 	max := int64(100)
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"type":  "counter",
 		"value": 50,
 		"min":   min,
@@ -104,7 +104,7 @@ func TestAPICounterIncrement(t *testing.T) {
 	_, _, mux := setupCounterTestServer(nil)
 
 	// Create counter via API
-	createBody := map[string]interface{}{"type": "counter", "value": 10}
+	createBody := map[string]any{"type": "counter", "value": 10}
 	createBytes, _ := json.Marshal(createBody)
 	createReq := httptest.NewRequest("POST", "/api/v1/create", bytes.NewReader(createBytes))
 	createReq.Header.Set("X-Customer-ID", "cust1")
@@ -113,7 +113,7 @@ func TestAPICounterIncrement(t *testing.T) {
 	storeID := createW.Body.String()
 
 	// Increment by 5
-	reqBody := map[string]interface{}{"delta": 5}
+	reqBody := map[string]any{"delta": 5}
 	bodyBytes, _ := json.Marshal(reqBody)
 
 	req := httptest.NewRequest("POST", "/api/v1/increment/"+storeID, bytes.NewReader(bodyBytes))
@@ -146,7 +146,7 @@ func TestAPICounterBoundsEnforcement(t *testing.T) {
 	_, _, mux := setupCounterTestServer(nil)
 
 	// Create counter with bounds [0, 100] via API
-	createBody := map[string]interface{}{"type": "counter", "value": 90, "min": 0, "max": 100}
+	createBody := map[string]any{"type": "counter", "value": 90, "min": 0, "max": 100}
 	createBytes, _ := json.Marshal(createBody)
 	createReq := httptest.NewRequest("POST", "/api/v1/create", bytes.NewReader(createBytes))
 	createReq.Header.Set("X-Customer-ID", "cust1")
@@ -155,7 +155,7 @@ func TestAPICounterBoundsEnforcement(t *testing.T) {
 	storeID := createW.Body.String()
 
 	// Increment beyond max
-	reqBody := map[string]interface{}{"delta": 20}
+	reqBody := map[string]any{"delta": 20}
 	bodyBytes, _ := json.Marshal(reqBody)
 
 	req := httptest.NewRequest("POST", "/api/v1/increment/"+storeID, bytes.NewReader(bodyBytes))
@@ -183,7 +183,7 @@ func TestAPICounterSnapshot(t *testing.T) {
 	_, _, mux := setupCounterTestServer(nil)
 
 	// Create counter via API
-	createBody := map[string]interface{}{"type": "counter", "value": 42, "min": 0, "max": 100}
+	createBody := map[string]any{"type": "counter", "value": 42, "min": 0, "max": 100}
 	createBytes, _ := json.Marshal(createBody)
 	createReq := httptest.NewRequest("POST", "/api/v1/create", bytes.NewReader(createBytes))
 	createReq.Header.Set("X-Customer-ID", "cust1")
@@ -234,7 +234,7 @@ func TestAPICounterTypeMismatch(t *testing.T) {
 	storeID := createW.Body.String()
 
 	// Try to increment blob store
-	reqBody := map[string]interface{}{"delta": 5}
+	reqBody := map[string]any{"delta": 5}
 	bodyBytes, _ := json.Marshal(reqBody)
 
 	req := httptest.NewRequest("POST", "/api/v1/increment/"+storeID, bytes.NewReader(bodyBytes))
@@ -259,7 +259,7 @@ func TestAPICounterRateLimiting(t *testing.T) {
 	_, _, mux := setupCounterTestServer(rateLimiter)
 
 	// Create counter via API (counts as 1 request)
-	createBody := map[string]interface{}{"type": "counter", "value": 0}
+	createBody := map[string]any{"type": "counter", "value": 0}
 	createBytes, _ := json.Marshal(createBody)
 	createReq := httptest.NewRequest("POST", "/api/v1/create", bytes.NewReader(createBytes))
 	createReq.Header.Set("X-Customer-ID", "cust1")
@@ -269,7 +269,7 @@ func TestAPICounterRateLimiting(t *testing.T) {
 
 	// Make 3 more requests (should all succeed - within burst of 4)
 	for i := 0; i < 3; i++ {
-		reqBody := map[string]interface{}{"delta": 1}
+		reqBody := map[string]any{"delta": 1}
 		bodyBytes, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest("POST", "/api/v1/increment/"+storeID, bytes.NewReader(bodyBytes))
 		req.Header.Set("X-Customer-ID", "cust1")
@@ -282,7 +282,7 @@ func TestAPICounterRateLimiting(t *testing.T) {
 	}
 
 	// 5th request (4 + 1) should be rate limited
-	reqBody := map[string]interface{}{"delta": 1}
+	reqBody := map[string]any{"delta": 1}
 	bodyBytes, _ := json.Marshal(reqBody)
 	req := httptest.NewRequest("POST", "/api/v1/increment/"+storeID, bytes.NewReader(bodyBytes))
 	req.Header.Set("X-Customer-ID", "cust1")
@@ -303,7 +303,7 @@ func TestAPINamedCounterCreate(t *testing.T) {
 	_, _, mux := setupCounterTestServer(nil)
 
 	// Create named counter with bounds via API
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"type":  "counter",
 		"value": 50,
 		"min":   0,
@@ -328,7 +328,7 @@ func TestAPINamedCounterCreate(t *testing.T) {
 	}
 
 	// Verify the counter was created by trying to increment it
-	incReq := map[string]interface{}{"delta": 5}
+	incReq := map[string]any{"delta": 5}
 	incBytes, _ := json.Marshal(incReq)
 	incReqHTTP := httptest.NewRequest("POST", "/api/v1/increment/"+storeID, bytes.NewReader(incBytes))
 	incReqHTTP.Header.Set("X-Customer-ID", "cust1")
@@ -361,7 +361,7 @@ func TestAPINamedCounterDuplicate(t *testing.T) {
 	_, _, mux := setupCounterTestServer(nil)
 
 	// Create first named counter
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"type":  "counter",
 		"value": 10,
 	}
@@ -395,7 +395,7 @@ func TestAPINamedCounterReuseIfExists(t *testing.T) {
 	_, _, mux := setupCounterTestServer(nil)
 
 	// Create first named counter
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"type":  "counter",
 		"value": 10,
 	}

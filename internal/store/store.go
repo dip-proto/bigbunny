@@ -521,15 +521,12 @@ func (m *Manager) CompleteLock(storeID, customerID, lockID string, newBody []byt
 }
 
 func (s *Store) Copy() *Store {
-	bodyCopy := make([]byte, len(s.Body))
-	copy(bodyCopy, s.Body)
-
 	cpy := &Store{
 		ID:               s.ID,
 		ShardID:          s.ShardID,
 		CustomerID:       s.CustomerID,
 		DataType:         s.DataType,
-		Body:             bodyCopy,
+		Body:             slices.Clone(s.Body),
 		ExpiresAt:        s.ExpiresAt,
 		Version:          s.Version,
 		LeaderEpoch:      s.LeaderEpoch,
