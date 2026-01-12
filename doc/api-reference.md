@@ -321,6 +321,14 @@ curl -X POST --unix-socket /tmp/bbd.sock \
   -H "Content-Type: application/json" \
   -d '{"delta":5}' \
   http://localhost/api/v1/increment/{store-id}
+
+# Optionally reset TTL with BigBunny-Not-Valid-After header
+curl -X POST --unix-socket /tmp/bbd.sock \
+  -H "X-Customer-ID: acme-corp" \
+  -H "Content-Type: application/json" \
+  -H "BigBunny-Not-Valid-After: 3600" \
+  -d '{"delta":5}' \
+  http://localhost/api/v1/increment/{store-id}
 ```
 
 Response:
@@ -337,19 +345,21 @@ Response:
 
 The `bounded` field is `true` when the operation hit a min/max limit. The `delta` parameter is required and can be positive or negative (negative delta decrements).
 
+**TTL Behavior**: The optional `BigBunny-Not-Valid-After` header resets the counter's expiry time. Without it, the original expiry time is preserved.
+
 ### Decrementing a Counter
 
 **Endpoint**: `POST /api/v1/decrement/{storeID}`
 
 ```bash
 curl -X POST --unix-socket /tmp/bbd.sock \
-  -H "X-Customer-ID": acme-corp" \
+  -H "X-Customer-ID: acme-corp" \
   -H "Content-Type: application/json" \
   -d '{"delta":3}' \
   http://localhost/api/v1/decrement/{store-id}
 ```
 
-This is syntactic sugar for incrementing with a negative delta. Response format is identical to increment.
+This is syntactic sugar for incrementing with a negative delta. Response format is identical to increment. Like increment, it also supports the optional `BigBunny-Not-Valid-After` header to reset the counter's TTL.
 
 ### Reading a Counter
 

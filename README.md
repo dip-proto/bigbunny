@@ -175,13 +175,15 @@ curl -X POST --unix-socket /tmp/bbd.sock \
   -d "cart data" \
   http://localhost/api/v1/create-by-name/shopping-cart
 
-# Atomic counters
+# Atomic counters (with optional TTL)
 curl -X POST --unix-socket /tmp/bbd.sock \
   -H "X-Customer-ID: acme-corp" \
   -H "Content-Type: application/json" \
+  -H "BigBunny-Not-Valid-After: 3600" \
   -d '{"type":"counter","value":0,"max":100}' \
   http://localhost/api/v1/create
 
+# Increment counter (optionally reset TTL with BigBunny-Not-Valid-After header)
 curl -X POST --unix-socket /tmp/bbd.sock \
   -H "X-Customer-ID: acme-corp" \
   -H "Content-Type: application/json" \
