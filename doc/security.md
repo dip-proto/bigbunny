@@ -20,7 +20,7 @@ When Big Bunny creates a store, it generates an encrypted identifier that client
 
 The algorithm is AES-128-SIV, which stands for Synthetic Initialization Vector. This variant of AES is designed for deterministic encryption—it doesn't require a nonce at all. Big Bunny doesn't use a nonce, which simplifies the implementation and makes the encryption deterministic: encrypting the same store ID plaintext with the same customer key always produces the same ciphertext. This deterministic property is exactly what Big Bunny needs because each customer gets their own encryption key derived from the master key, and the derivation needs to be deterministic and repeatable.
 
-Here's how it works. When you start Big Bunny, you provide a master encryption key. This is a 32-byte random value that all nodes in your cluster share. For each customer, Big Bunny derives a unique encryption key using HKDF (a key derivation function) with the customer ID as input. So customer A and customer B get completely different encryption keys, even though they share the same master key.
+Here's how it works. When you start Big Bunny, you provide a master encryption key. This is a 32-byte random value that all nodes in your cluster share. For each customer, Big Bunny derives a unique encryption key using HKDF (a key derivation function) with the site identifier and customer ID as inputs. So customer A and customer B get completely different encryption keys, even though they share the same master key. Additionally, a store ID created on site "nyc01" cannot be decrypted on site "sfo01" because the site is incorporated into the key derivation.
 
 When encrypting a store ID, Big Bunny takes the plaintext (which contains the site identifier, a shard ID for routing, and a unique identifier), derives the customer-specific key, and encrypts using AES-SIV. The result is a ciphertext that only that customer can decrypt. If customer A tries to decrypt customer B's store ID, the decryption fails because they're using different derived keys.
 
@@ -29,6 +29,10 @@ The encrypted store ID has this format: `v1:0:8ahePLwi-iJB-h_8AbZYvK4jK9...`. Th
 Inside the plaintext, before encryption, there are three pieces of information. The site identifies which PoP this store lives in. The shard ID is random bytes used for deterministic replica placement. The unique identifier is more random bytes to prevent collisions. When combined and encrypted, these create an opaque token that clients can't tamper with or forge.
 
 There's also Associated Authenticated Data (AAD) included in the encryption. The AAD is just the string `"storeid:v1:"` concatenated with the customer ID. This binds the ciphertext to the customer ID cryptographically. Even if someone could somehow use the wrong key (they can't), the AAD mismatch would cause decryption to fail. It's defense in depth—the primary protection is the per-customer key derivation, but the AAD provides an additional layer.
+
+The site binding provides an additional layer of isolation. When decrypting, Big Bunny uses the expected site in the HKDF key derivation. If a store ID was created on site "nyc01" but someone tries to use it on site "sfo01", the derived key will be different and decryption will fail. This prevents store IDs from being accidentally or maliciously used across sites, even if both sites share the same master key.
+
+For deployments that need cross-site store ID portability (such as during migrations or for debugging), the `--disable-site-verification` flag can be used. When enabled, the site is not included in key derivation, allowing store IDs to work across any site using the same master key. This should only be used in controlled circumstances as it weakens the site isolation guarantees.
 
 ## Key Management
 
