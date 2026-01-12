@@ -76,6 +76,7 @@ type ReplicationMessage struct {
 
 type HeartbeatMessage struct {
 	HostID      string    `json:"host_id"`
+	Address     string    `json:"address"`     // TCP address of sender (for request forwarding)
 	LeaderEpoch uint64    `json:"leader_epoch"`
 	StoreCount  int       `json:"store_count"`
 	MemoryUsage int64     `json:"memory_usage"`

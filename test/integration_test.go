@@ -489,8 +489,10 @@ func TestLeaderChangedErrorCode(t *testing.T) {
 	}
 
 	// Try to create on secondary - should get LeaderChanged
+	// Use X-BB-No-Forward to test the error path (disable automatic forwarding)
 	req, _ := http.NewRequest("POST", "http://localhost/api/v1/create", strings.NewReader("test"))
 	req.Header.Set("X-Customer-ID", "customer123")
+	req.Header.Set("X-BB-No-Forward", "true")
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)

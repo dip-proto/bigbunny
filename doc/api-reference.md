@@ -71,7 +71,7 @@ The possible errors you might see are:
 
 - **507 Insufficient Storage** with error code `CapacityExceeded` means the node has hit its memory limit and can't accept new stores. You'll need to either clean up old stores, increase the memory limit, or add more capacity.
 
-- **503 Service Unavailable** with error code `LeaderChanged` means your request hit a secondary node. Writes must go to the primary. The response includes a `Retry-After: 1` header suggesting you wait a second before retrying. The client library should handle this automatically by retrying on the primary.
+- **503 Service Unavailable** with error code `LeaderChanged` is rare—it means the node couldn't forward your request to the primary (typically due to network issues or the primary being unavailable). Requests are automatically forwarded to the primary internally, but if forwarding fails, you'll see this error with a `Retry-After: 1` header suggesting you retry.
 
 ## Reading Stores
 
@@ -129,7 +129,7 @@ The errors are similar to create:
 
 - **404**, **403**, and **507** errors work the same as create.
 
-- **503 Service Unavailable** with `LeaderChanged` means you need to retry on the primary.
+- **503 Service Unavailable** with `LeaderChanged` means automatic forwarding to the primary failed. Retry the request.
 
 ## The Modify Protocol
 
@@ -217,7 +217,7 @@ The possible errors:
 
 - **403 Forbidden** with `Unauthorized` means the customer ID is wrong.
 
-- **503 Service Unavailable** with `LeaderChanged` means retry on the primary.
+- **503 Service Unavailable** with `LeaderChanged` means automatic forwarding to the primary failed. Retry the request.
 
 Note that delete doesn't return 404 if the store is missing. This is by design—deleting a non-existent resource is considered successful.
 
@@ -363,7 +363,7 @@ Every error response includes a `BigBunny-Error-Code` header with a machine-read
 | `StoreLocked` | 409 | Yes | Lock held by another request |
 | `LockMismatch` | 409 | No | Wrong lock ID |
 | `StoreExpired` | 410 | No | Store TTL expired |
-| `LeaderChanged` | 503 | Yes | Write hit secondary |
+| `LeaderChanged` | 503 | Yes | Forwarding to primary failed |
 | `StoreUnavailable` | 503 | Yes | Node recovering |
 | `LockStateUnknown` | 409 | Yes | Lock state unclear after failover |
 | `NameCreating` | 503 | Yes | Name reservation in progress |

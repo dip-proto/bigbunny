@@ -173,6 +173,7 @@ func main() {
 	hasher := routing.NewRendezvousHasher(hosts, *routingSecret)
 
 	replicaCfg := replica.DefaultConfig(*hostID, *site)
+	replicaCfg.TCPAddress = *tcpAddr
 	replicaCfg.InternalToken = *internalToken
 	replicaMgr := replica.NewManager(replicaCfg, storeMgr, hasher)
 
@@ -182,10 +183,12 @@ func main() {
 	apiCfg := &api.Config{
 		Site:          *site,
 		HostID:        *hostID,
+		TCPAddress:    *tcpAddr,
 		DefaultTTL:    14 * 24 * time.Hour,
 		MaxBodySize:   2 * 1024,
 		ModifyTimeout: 500 * time.Millisecond,
 		Cipher:        cipher,
+		InternalToken: *internalToken,
 	}
 	apiServer := api.NewServer(apiCfg, storeMgr, replicaMgr, hasher)
 

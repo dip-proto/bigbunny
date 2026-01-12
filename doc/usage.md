@@ -340,7 +340,7 @@ When something goes wrong, Big Bunny returns an HTTP status code and includes a 
 
 **LockStateUnknown (409)**: The primary just failed over and isn't sure about lock state yet. Retry after the time specified in the `Retry-After` header (usually 1 second). This is temporary—after 500 milliseconds post-failover, lock state becomes certain again.
 
-**LeaderChanged (503)**: You sent a write to the secondary. Writes only work on the primary. Retry on a different node. The `Retry-After` header tells you how long to wait.
+**LeaderChanged (503)**: Automatic request forwarding to the primary failed (typically due to network issues or primary unavailability). This is rare since requests are forwarded internally. Retry after the time specified in `Retry-After`.
 
 **StoreUnavailable (503)**: The node is recovering and isn't ready to serve requests yet. Retry after the time in `Retry-After`. This happens briefly after a node joins or rejoins the cluster.
 
@@ -497,7 +497,7 @@ Handle locks carefully. You have 500 milliseconds from begin-modify to complete-
 
 Always handle errors. Network errors, timeouts, and transient failures happen. Make sure your code handles `StoreLocked`, `LeaderChanged`, and `LockStateUnknown` errors gracefully with retry logic.
 
-Route writes to the primary. Big Bunny doesn't forward requests automatically. If you send a write to the secondary, you'll get a `LeaderChanged` error. Your application needs to track which node is primary and route writes accordingly. For a two-node cluster, you can try both nodes until one succeeds.
+Connect to any node. Big Bunny automatically forwards write requests to the primary internally, so you can connect to any node in the cluster. The forwarding is transparent with connection pooling for efficiency. If forwarding fails (rare), you'll get a `LeaderChanged` error and should retry.
 
 Check capacity before scaling. Monitor memory usage and watch for `CapacityExceeded` errors. When you're approaching your memory limit, it's time to increase `--memory-limit` or add capacity.
 

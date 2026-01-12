@@ -16,20 +16,23 @@ import (
 )
 
 type Server struct {
-	store   *store.Manager
-	replica *replica.Manager
-	hasher  *routing.RendezvousHasher
-	config  *Config
-	cipher  auth.StoreIDCipher
+	store            *store.Manager
+	replica          *replica.Manager
+	hasher           *routing.RendezvousHasher
+	config           *Config
+	cipher           auth.StoreIDCipher
+	forwardingClient *http.Client // Shared HTTP client for request forwarding (with connection pooling)
 }
 
 type Config struct {
 	Site          string
 	HostID        string
+	TCPAddress    string // TCP address of this node (for self-forwarding detection)
 	DefaultTTL    time.Duration
 	MaxBodySize   int64
 	ModifyTimeout time.Duration
 	Cipher        auth.StoreIDCipher
+	InternalToken string // Shared secret for internal endpoints (forwarding)
 }
 
 func DefaultConfig() *Config {
@@ -49,6 +52,14 @@ func NewServer(cfg *Config, storeMgr *store.Manager, replicaMgr *replica.Manager
 		hasher:  hasher,
 		config:  cfg,
 		cipher:  cfg.Cipher,
+		forwardingClient: &http.Client{
+			Timeout: 5 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+			},
+		},
 	}
 }
 
@@ -94,16 +105,100 @@ func (s *Server) RegisterOpsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /internal/release-lock/{storeID}", s.handleForceReleaseLock)
 }
 
-func (s *Server) requirePrimary(w http.ResponseWriter) bool {
-	if s.replica.Role() != replica.RolePrimary {
-		writeRetryableError(w, ErrCodeLeaderChanged, "not primary", time.Second)
+// forwardToLeader forwards the request to the current primary node.
+// Preserves all headers and body, adds internal auth and loop prevention headers.
+func (s *Server) forwardToLeader(w http.ResponseWriter, r *http.Request, leaderAddr string) {
+	// Build target URL
+	targetURL := "http://" + leaderAddr + r.URL.Path
+	if r.URL.RawQuery != "" {
+		targetURL += "?" + r.URL.RawQuery
+	}
+
+	// Create forwarded request
+	fwdReq, err := http.NewRequest(r.Method, targetURL, r.Body)
+	if err != nil {
+		http.Error(w, "failed to create forwarding request", http.StatusBadGateway)
+		return
+	}
+
+	// Copy all request headers
+	for key, values := range r.Header {
+		for _, value := range values {
+			fwdReq.Header.Add(key, value)
+		}
+	}
+
+	// Add internal headers
+	// X-Internal-Token for authentication (uses same token as inter-node replication)
+	internalToken := s.getInternalToken()
+	if internalToken != "" {
+		fwdReq.Header.Set("X-Internal-Token", internalToken)
+	}
+	// X-BB-No-Forward prevents forwarding loops
+	fwdReq.Header.Set("X-BB-No-Forward", "true")
+
+	// Execute forwarded request
+	resp, err := s.forwardingClient.Do(fwdReq)
+	if err != nil {
+		http.Error(w, "forwarding failed: "+err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Copy all response headers (preserves BigBunny-Error-Code, etc.)
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+
+	// Copy response status and body
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+// getInternalToken retrieves the internal token for forwarding requests.
+func (s *Server) getInternalToken() string {
+	return s.config.InternalToken
+}
+
+func (s *Server) requirePrimary(w http.ResponseWriter, r *http.Request) bool {
+	// If I'm primary, handle locally
+	if s.replica.Role() == replica.RolePrimary {
+		return true
+	}
+
+	// If request already forwarded, can't forward again (prevent loops)
+	// Return error since we're not primary and can't forward
+	if r.Header.Get("X-BB-No-Forward") == "true" {
+		writeRetryableError(w, ErrCodeLeaderChanged, "not primary (forwarding disabled)", time.Second)
 		return false
 	}
-	return true
+
+	// I'm not primary - try to forward
+	leaderAddr := s.replica.GetLeaderAddress()
+	if leaderAddr == "" {
+		// Don't know who leader is yet (shouldn't happen with deterministic fallback)
+		writeRetryableError(w, ErrCodeLeaderChanged, "leader unknown", time.Second)
+		return false
+	}
+
+	// Safety check: don't forward to self
+	// Compare addresses - if leader address matches our address, handle locally
+	// Note: This is a defensive check; shouldn't happen in normal operation
+	if leaderAddr == s.config.TCPAddress {
+		// Log error but handle locally to avoid loop
+		// In practice, this means role and leader tracking are out of sync
+		return true
+	}
+
+	// Forward to leader
+	s.forwardToLeader(w, r, leaderAddr)
+	return false // Signal: don't handle locally, already forwarded
 }
 
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePrimary(w) {
+	if !s.requirePrimary(w, r) {
 		return
 	}
 
@@ -164,7 +259,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateByName(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePrimary(w) {
+	if !s.requirePrimary(w, r) {
 		return
 	}
 
@@ -353,7 +448,7 @@ func (s *Server) handleCreateByName(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePrimary(w) {
+	if !s.requirePrimary(w, r) {
 		return
 	}
 
@@ -387,7 +482,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteByName(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePrimary(w) {
+	if !s.requirePrimary(w, r) {
 		return
 	}
 
@@ -576,7 +671,7 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBeginModify(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePrimary(w) {
+	if !s.requirePrimary(w, r) {
 		return
 	}
 
@@ -627,7 +722,7 @@ func (s *Server) handleBeginModify(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCompleteModify(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePrimary(w) {
+	if !s.requirePrimary(w, r) {
 		return
 	}
 
@@ -681,7 +776,7 @@ func (s *Server) handleCompleteModify(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCancelModify(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePrimary(w) {
+	if !s.requirePrimary(w, r) {
 		return
 	}
 
@@ -724,7 +819,7 @@ func (s *Server) handleCancelModify(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePrimary(w) {
+	if !s.requirePrimary(w, r) {
 		return
 	}
 
@@ -871,7 +966,7 @@ func (s *Server) handleForceReleaseLock(w http.ResponseWriter, r *http.Request) 
 // handleInternalSnapshot returns a snapshot of stores and tombstones for recovery.
 // Only primary can serve snapshots.
 func (s *Server) handleInternalSnapshot(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePrimary(w) {
+	if !s.requirePrimary(w, r) {
 		return
 	}
 
@@ -899,7 +994,7 @@ type RegistrySnapshotResponse struct {
 // handleRegistrySnapshot returns a snapshot of registry entries for recovery.
 // Only primary can serve snapshots.
 func (s *Server) handleRegistrySnapshot(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePrimary(w) {
+	if !s.requirePrimary(w, r) {
 		return
 	}
 

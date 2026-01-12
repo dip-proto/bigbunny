@@ -43,6 +43,7 @@ func (r Role) String() string {
 type Config struct {
 	HostID             string
 	Site               string
+	TCPAddress         string        // TCP address of this host (for forwarding)
 	LeaseDuration      time.Duration // 3x modify timeout + buffer
 	LeaseGrace         time.Duration // additional grace before promotion
 	HeartbeatInterval  time.Duration
@@ -79,6 +80,7 @@ type Manager struct {
 	mu               sync.RWMutex
 	role             Role
 	leaderEpoch      uint64
+	leaderAddress    string // TCP address of current primary (for request forwarding)
 	lastLeaderSeen   time.Time
 	peerLastSeen     map[string]time.Time
 	replicationQueue chan *ReplicationMessage
@@ -174,6 +176,44 @@ func (m *Manager) LeaderEpoch() uint64 {
 	return m.leaderEpoch
 }
 
+// GetLeaderAddress returns the TCP address of the current primary for request forwarding.
+// If no leader address is known from heartbeats, falls back to deterministic inference
+// from the host list (same logic as startup election). This eliminates startup races.
+func (m *Manager) GetLeaderAddress() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// If we know the leader from heartbeats, use it
+	if m.leaderAddress != "" {
+		return m.leaderAddress
+	}
+
+	// Fallback: infer from sorted host list (deterministic)
+	// This matches the startup election logic (first host = primary)
+	hosts := m.hasher.GetHealthyHosts()
+	if len(hosts) == 0 {
+		return ""
+	}
+
+	// Sort by ID (deterministic ordering)
+	sortedHosts := make([]*routing.Host, len(hosts))
+	copy(sortedHosts, hosts)
+	sortHostsByID(sortedHosts)
+
+	return sortedHosts[0].Address
+}
+
+// sortHostsByID sorts hosts by ID in lexicographic order (deterministic)
+func sortHostsByID(hosts []*routing.Host) {
+	for i := 0; i < len(hosts)-1; i++ {
+		for j := i + 1; j < len(hosts); j++ {
+			if hosts[j].ID < hosts[i].ID {
+				hosts[i], hosts[j] = hosts[j], hosts[i]
+			}
+		}
+	}
+}
+
 // RecoveryAttempts returns the total number of recovery attempts (for testing/metrics).
 func (m *Manager) RecoveryAttempts() int {
 	m.mu.RLock()
@@ -190,6 +230,8 @@ func (m *Manager) SetRole(role Role) {
 	m.lastLeaderSeen = m.now()
 	if role == RolePrimary {
 		m.leaderEpoch++
+		// Set leader address to self when becoming primary
+		m.leaderAddress = m.config.TCPAddress
 		// Only set lastPromotionAt on actual failover (secondary → primary)
 		// not on initial startup, since there's no prior lock state to be unknown about
 		if wasSecondary {
@@ -206,6 +248,7 @@ func (m *Manager) ForcePromote() {
 	wasNotPrimary := m.role != RolePrimary
 	m.role = RolePrimary
 	m.leaderEpoch++
+	m.leaderAddress = m.config.TCPAddress
 	m.lastLeaderSeen = m.now()
 	if wasNotPrimary {
 		m.lastPromotionAt = m.now()
@@ -385,6 +428,7 @@ func (m *Manager) sendHeartbeats() {
 	hosts := m.hasher.GetAllHosts()
 	hb := &HeartbeatMessage{
 		HostID:      m.config.HostID,
+		Address:     m.config.TCPAddress, // Include our TCP address for forwarding
 		LeaderEpoch: m.LeaderEpoch(),
 		StoreCount:  m.store.Count(),
 		MemoryUsage: m.store.MemoryUsage(),
@@ -428,6 +472,10 @@ func (m *Manager) HandleHeartbeat(hb *HeartbeatMessage) *HeartbeatAck {
 
 	if hb.LeaderEpoch >= m.leaderEpoch {
 		m.lastLeaderSeen = m.now()
+		// Update leader address from heartbeat (primary advertises its address)
+		if hb.Address != "" {
+			m.leaderAddress = hb.Address
+		}
 		if hb.LeaderEpoch > m.leaderEpoch {
 			m.leaderEpoch = hb.LeaderEpoch
 			if m.role == RolePrimary {
