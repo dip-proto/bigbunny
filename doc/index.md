@@ -205,7 +205,7 @@ See the [Architecture](architecture.md) document for a detailed performance anal
 
 ## Security Overview
 
-Big Bunny uses AES-128-SIV to encrypt store IDs, with per-customer key derivation via HKDF. This provides both tamper protection and cryptographic isolation between customers. Even with a bug in the routing logic, customers can't access each other's data because they literally can't decrypt the store IDs.
+Big Bunny uses AES-128-SIV to encrypt store IDs, with per-customer key derivation. This provides both tamper protection and cryptographic isolation between customers. Even with a bug in the routing logic, customers can't access each other's data because they literally can't decrypt the store IDs.
 
 Internal replication endpoints require authentication via a shared token, though the current implementation doesn't encrypt the traffic (you should run on a trusted private network). The Unix socket's file permissions control who can access the local API.
 

@@ -217,22 +217,22 @@ These trade-offs make Big Bunny fast and simple to operate. If you need durabili
 
 ## Performance
 
-| Metric           | Value   | Notes                            |
-| ---------------- | ------- | -------------------------------- |
-| Write latency    | ~100μs  | Local operation only             |
-| Read latency     | ~50μs   | No lock acquisition              |
-| Failover time    | ~4s     | Lease + grace period             |
-| Max store size   | 2KB     | Configurable limit               |
-| Default TTL      | 14 days | Configurable per store           |
-| Lock timeout     | 500ms   | Fixed for modify operations      |
-| Replication lag  | <100ms  | Typical under normal load        |
-| Rate limit       | 100/s   | Per customer (default, tunable)  |
-| Burst capacity   | 200     | Per customer (default, tunable)  |
-| HTTP timeout     | 30s     | Read/write (configurable)        |
+| Metric          | Value   | Notes                           |
+| --------------- | ------- | ------------------------------- |
+| Write latency   | ~100μs  | Local operation only            |
+| Read latency    | ~50μs   | No lock acquisition             |
+| Failover time   | ~4s     | Lease + grace period            |
+| Max store size  | 2KB     | Configurable limit              |
+| Default TTL     | 14 days | Configurable per store          |
+| Lock timeout    | 500ms   | Fixed for modify operations     |
+| Replication lag | <100ms  | Typical under normal load       |
+| Rate limit      | 100/s   | Per customer (default, tunable) |
+| Burst capacity  | 200     | Per customer (default, tunable) |
+| HTTP timeout    | 30s     | Read/write (configurable)       |
 
 ## Security
 
-Store IDs use AES-128-SIV encryption with per-customer key derivation via HKDF. This provides cryptographic isolation—even with a bug in the routing logic, customers can't access each other's data because they literally can't decrypt the store IDs.
+Store IDs are encrypted with per-customer key derivation. This provides cryptographic isolation—even with a bug in the routing logic, customers can't access each other's data because they literally can't decrypt the store IDs.
 
 Best practices:
 - Generate keys with `openssl rand -hex 32`
