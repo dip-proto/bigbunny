@@ -7,3 +7,6 @@ var ErrJoinInProgress = errors.New("recovery in progress")
 
 // ErrTombstoneLimitExceeded is returned when adding a tombstone would exceed either the per-customer or global tombstone limit, which helps prevent memory exhaustion from rapid create-delete cycles.
 var ErrTombstoneLimitExceeded = errors.New("tombstone limit exceeded")
+
+// ErrSiteMismatch is returned when a peer's site identifier doesn't match ours, indicating a cluster misconfiguration.
+var ErrSiteMismatch = errors.New("site mismatch")

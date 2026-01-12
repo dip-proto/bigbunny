@@ -80,6 +80,7 @@ type ReplicationMessage struct {
 // HeartbeatMessage is sent periodically by the primary to all secondaries to maintain its lease and share cluster state.
 type HeartbeatMessage struct {
 	HostID      string    `json:"host_id"`
+	Site        string    `json:"site"`    // Site identifier (must match for cluster membership)
 	Address     string    `json:"address"` // TCP address of sender (for request forwarding)
 	LeaderEpoch uint64    `json:"leader_epoch"`
 	StoreCount  int       `json:"store_count"`
@@ -90,6 +91,7 @@ type HeartbeatMessage struct {
 // HeartbeatAck is the response a secondary sends back after receiving a heartbeat, letting the primary know the secondary is alive.
 type HeartbeatAck struct {
 	HostID         string    `json:"host_id"`
+	Site           string    `json:"site"` // Site identifier (for verification)
 	LeaderEpoch    uint64    `json:"leader_epoch"`
 	LastSeenLeader time.Time `json:"last_seen_leader"`
 	Timestamp      time.Time `json:"timestamp"`
@@ -110,6 +112,7 @@ type TombstoneEntry struct {
 // SnapshotData contains a complete point-in-time copy of all stores and tombstones that a joining node uses to bootstrap its state.
 type SnapshotData struct {
 	HostID      string           `json:"host_id"`
+	Site        string           `json:"site"` // Site identifier (must match for recovery)
 	Stores      []*store.Store   `json:"stores"`
 	Tombstones  []TombstoneEntry `json:"tombstones"`
 	LeaderEpoch uint64           `json:"leader_epoch"`

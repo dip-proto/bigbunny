@@ -1153,7 +1153,15 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ack := s.replica.HandleHeartbeat(&hb)
+	ack, err := s.replica.HandleHeartbeat(&hb)
+	if err != nil {
+		if err == replica.ErrSiteMismatch {
+			http.Error(w, "site mismatch: nodes must have matching -site configuration", http.StatusBadRequest)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(ack); err != nil {
@@ -1213,6 +1221,7 @@ func (s *Server) handleInternalSnapshot(w http.ResponseWriter, r *http.Request) 
 
 	resp := replica.SnapshotData{
 		HostID:      s.config.HostID,
+		Site:        s.config.Site,
 		Stores:      stores,
 		Tombstones:  tombstones,
 		LeaderEpoch: s.replica.LeaderEpoch(),

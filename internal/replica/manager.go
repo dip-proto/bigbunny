@@ -439,7 +439,8 @@ func (m *Manager) sendHeartbeats() {
 	hosts := m.hasher.GetAllHosts()
 	hb := &HeartbeatMessage{
 		HostID:      m.config.HostID,
-		Address:     m.config.TCPAddress, // Include our TCP address for forwarding
+		Site:        m.config.Site,        // Include site for cluster membership validation
+		Address:     m.config.TCPAddress,  // Include our TCP address for forwarding
 		LeaderEpoch: m.LeaderEpoch(),
 		StoreCount:  m.store.Count(),
 		MemoryUsage: m.store.MemoryUsage(),
@@ -476,9 +477,16 @@ func (m *Manager) sendHeartbeat(address string, hb *HeartbeatMessage) {
 }
 
 // HandleHeartbeat processes an incoming heartbeat from another node and may trigger role changes or recovery if a higher epoch is seen.
-func (m *Manager) HandleHeartbeat(hb *HeartbeatMessage) *HeartbeatAck {
+// Returns ErrSiteMismatch if the peer's site doesn't match ours.
+func (m *Manager) HandleHeartbeat(hb *HeartbeatMessage) (*HeartbeatAck, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Validate site match - reject heartbeats from peers in different sites
+	if hb.Site != "" && hb.Site != m.config.Site {
+		log.Printf("rejecting heartbeat from %s: site mismatch (theirs=%q, ours=%q)", hb.HostID, hb.Site, m.config.Site)
+		return nil, ErrSiteMismatch
+	}
 
 	m.peerLastSeen[hb.HostID] = m.now()
 
@@ -520,10 +528,11 @@ func (m *Manager) HandleHeartbeat(hb *HeartbeatMessage) *HeartbeatAck {
 
 	return &HeartbeatAck{
 		HostID:         m.config.HostID,
+		Site:           m.config.Site,
 		LeaderEpoch:    m.leaderEpoch,
 		LastSeenLeader: m.lastLeaderSeen,
 		Timestamp:      m.now(),
-	}
+	}, nil
 }
 
 func (m *Manager) leaseCheckLoop() {
@@ -1182,6 +1191,14 @@ func (m *Manager) doRecovery(primaryAddr string) {
 	storeSnapshot, err := m.fetchStoreSnapshot(primaryAddr)
 	if err != nil {
 		log.Printf("recovery: failed to fetch store snapshot: %v", err)
+		m.recoveryFailed()
+		return
+	}
+
+	// Reject snapshots from nodes in different sites
+	if storeSnapshot.Site != "" && storeSnapshot.Site != m.config.Site {
+		log.Printf("recovery: rejecting snapshot from %s: site mismatch (theirs=%q, ours=%q)",
+			primaryAddr, storeSnapshot.Site, m.config.Site)
 		m.recoveryFailed()
 		return
 	}
