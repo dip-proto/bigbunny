@@ -148,7 +148,7 @@ curl -X POST --unix-socket /tmp/bbd.sock \
   -H "X-Customer-ID: acme-corp" \
   http://localhost/api/v1/snapshot/{store-id}
 
-# Update a store (one-shot)
+# One-shot update (lock, write, unlock in one operation)
 curl -X POST --unix-socket /tmp/bbd.sock \
   -H "X-Customer-ID: acme-corp" \
   -d "updated data" \

@@ -51,20 +51,20 @@ The system gives you back a lock token and shows you the current contents. The l
 Now you can compute your new value based on what you read. In a real application, you might increment a counter, add an item to a shopping cart, or update session state. For this example, let's just replace the contents with something new.
 
 ```bash
-./bbd complete-modify v1:0:8ahePLwi-iJB-h_8AbZYvK4jK9... \
-  --lock "$LOCK" \
-  --data "Updated content!"
+./bbd complete-modify --lock "$LOCK" --data "Updated content!" v1:0:8ahePLwi-iJB-h_8AbZYvK4jK9...
 ```
 
 The store is now updated, and the lock is released. If something went wrong and you wanted to abort instead, you'd use `cancel-modify` with the same lock token.
 
 ## The One-Shot Update
 
-If you don't need to read the current contents before writing, there's a simpler alternative. The `update` command acquires the lock, writes your new data, and releases the lock all in one operation.
+If you don't need to read the current contents before writing, there's a simpler alternative. The one-shot update endpoint acquires the lock, writes your new data, and releases the lock all in one operation.
 
 ```bash
-./bbd update v1:0:8ahePLwi-iJB-h_8AbZYvK4jK9... \
-  --data "One-shot update!"
+curl -X POST --unix-socket /tmp/bbd.sock \
+  -H "X-Customer-ID: my-app" \
+  -d "One-shot update!" \
+  http://localhost/api/v1/update/v1:0:8ahePLwi-iJB-h_8AbZYvK4jK9...
 ```
 
 This is perfect for cases where you're just replacing the entire store contents and don't care what was there before.
@@ -74,7 +74,7 @@ This is perfect for cases where you're just replacing the entire store contents 
 Sometimes you want to refer to a store by a memorable name instead of tracking an opaque encrypted identifier. That's what named stores are for. Let's create one for a shopping cart.
 
 ```bash
-./bbd create-named shopping-cart --data '{"items": []}'
+./bbd create-named --data '{"items": []}' shopping-cart
 ```
 
 You still get back a store ID, but now you can look it up later by name.
@@ -149,7 +149,7 @@ COUNTER=$(./bbd create --data "0")
 LOCK=$(./bbd begin-modify $COUNTER)
 CURRENT=$(./bbd get $COUNTER)
 NEW_VALUE=$((CURRENT + 1))
-./bbd complete-modify $COUNTER --lock "$LOCK" --data "$NEW_VALUE"
+./bbd complete-modify --lock "$LOCK" --data "$NEW_VALUE" $COUNTER
 ```
 
 The lock ensures that even if two requests try to increment the counter simultaneously, they won't step on each other. One will acquire the lock, increment the counter, and release it. The other will wait for the lock, then increment the already-updated value.

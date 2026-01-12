@@ -68,7 +68,7 @@ There are two ways to update a store, depending on whether you need to read the 
 If you just want to replace the contents entirely, use the one-shot update command:
 
 ```bash
-./bbd update v1:0:8ahePLwi... --data "new contents"
+curl -X POST --unix-socket /tmp/bbd.sock -H "X-Customer-ID: acme-corp" -d "new contents" http://localhost/api/v1/update/v1:0:8ahePLwi...
 ```
 
 This acquires the lock, updates the store, and releases the lock, all in one operation. It's perfect when you don't care what was there before.
@@ -76,7 +76,7 @@ This acquires the lock, updates the store, and releases the lock, all in one ope
 If you want to change the TTL too:
 
 ```bash
-./bbd update v1:0:8ahePLwi... --data "new data" --ttl 7200
+curl -X POST --unix-socket /tmp/bbd.sock -H "X-Customer-ID: acme-corp" -H "BigBunny-Not-Valid-After: 7200" -d "new data" http://localhost/api/v1/update/v1:0:8ahePLwi...
 ```
 
 ### Deleting Stores
@@ -119,9 +119,7 @@ NEW_VALUE=$((CURRENT + 1))
 Once you've computed the new value, complete the modification:
 
 ```bash
-./bbd complete-modify v1:0:8ahePLwi... \
-  --lock "$LOCK" \
-  --data "$NEW_VALUE"
+./bbd complete-modify --lock "$LOCK" --data "$NEW_VALUE" v1:0:8ahePLwi...
 ```
 
 The lock gets released, the store gets updated, and the change replicates to the secondary.
@@ -143,7 +141,7 @@ Sometimes you want to refer to a store by a name instead of tracking an opaque e
 Create a store with a name attached:
 
 ```bash
-./bbd create-named shopping-cart --data '{"items": []}'
+./bbd create-named --data '{"items": []}' shopping-cart
 ```
 
 You still get back a store ID, but now there's also a name mapping. The name is scoped to your customer ID, so different customers can use the same name without conflict.
@@ -151,7 +149,7 @@ You still get back a store ID, but now there's also a name mapping. The name is 
 If you try to create a named store that already exists, you'll get an error. But sometimes you want "get or create" semantics—use the existing store if it exists, create it if it doesn't. Add `--reuse` for that:
 
 ```bash
-./bbd create-named shopping-cart --reuse --data '{"default": true}'
+./bbd create-named --reuse --data '{"default": true}' shopping-cart
 ```
 
 If `shopping-cart` already exists, you get back its store ID. If not, a new store gets created with your data.
@@ -415,7 +413,7 @@ Implement a per-user rate limiter that allows 100 requests per minute:
 
 ```bash
 USER_ID="user123"
-COUNTER=$(./bbd create-named "${USER_ID}-rate-limit" --data "0" --ttl 60 --reuse)
+COUNTER=$(./bbd create-named --data "0" --ttl 60 --reuse "${USER_ID}-rate-limit")
 
 # On each request, increment the counter
 LOCK=$(./bbd begin-modify $COUNTER)
@@ -428,7 +426,7 @@ if [ "$COUNT" -ge 100 ]; then
 fi
 
 NEW_COUNT=$((COUNT + 1))
-./bbd complete-modify $COUNTER --lock "$LOCK" --data "$NEW_COUNT"
+./bbd complete-modify --lock "$LOCK" --data "$NEW_COUNT" $COUNTER
 ```
 
 The counter expires after 60 seconds (the TTL), which resets the limit automatically.
@@ -439,14 +437,14 @@ Maintain a shopping cart that persists across requests:
 
 ```bash
 USER_ID="user456"
-CART_ID=$(./bbd create-named "${USER_ID}-cart" --data '{"items":[]}' --ttl 86400 --reuse)
+CART_ID=$(./bbd create-named --data '{"items":[]}' --ttl 86400 --reuse "${USER_ID}-cart")
 
 # Add an item (this would be JSON manipulation in a real app)
 LOCK=$(./bbd begin-modify $CART_ID)
 CURRENT=$(./bbd get $CART_ID)
 # ... parse JSON, add item, serialize ...
 NEW_CART='{"items":["item1","item2"]}'
-./bbd complete-modify $CART_ID --lock "$LOCK" --data "$NEW_CART"
+./bbd complete-modify --lock "$LOCK" --data "$NEW_CART" $CART_ID
 ```
 
 The cart expires after 24 hours (86400 seconds), which is reasonable for shopping sessions.
@@ -480,7 +478,7 @@ Big Bunny doesn't extend TTLs automatically when you access a store. If you want
 DATA=$(./bbd get $STORE_ID)
 
 # Update with a fresh TTL
-./bbd update $STORE_ID --data "$DATA" --ttl 3600
+curl -X POST --unix-socket /tmp/bbd.sock -H "X-Customer-ID: $CUSTOMER_ID" -H "BigBunny-Not-Valid-After: 3600" -d "$DATA" http://localhost/api/v1/update/$STORE_ID
 ```
 
 This gives you another hour from now. For high-traffic applications, you might only reset the TTL occasionally (say, every 10 minutes) rather than on every access, to reduce write load.
