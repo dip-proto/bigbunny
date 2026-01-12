@@ -769,6 +769,17 @@ func printWarning(resp *http.Response) {
 	}
 }
 
+func printJSONResponse(r io.Reader) {
+	body, _ := io.ReadAll(r)
+	var result map[string]any
+	if err := json.Unmarshal(body, &result); err == nil {
+		prettyJSON, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Println(string(prettyJSON))
+	} else {
+		fmt.Println(string(body))
+	}
+}
+
 func doUDSRequestWithHeaders(method, socketPath, path string, body io.Reader, headers map[string]string) (*http.Response, error) {
 	client := &http.Client{
 		Transport: &http.Transport{
@@ -1158,69 +1169,29 @@ func runCounterGetCommand(args []string) {
 }
 
 func runCounterIncrementCommand(args []string) {
-	fs := flag.NewFlagSet("counter-increment", flag.ExitOnError)
-	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
-	customerID := fs.String("customer", "test-customer", "customer ID")
-	delta := fs.Int64("delta", 1, "amount to increment (default 1)")
-	ttl := fs.Int("ttl", 0, "TTL in seconds (0 = keep existing)")
-	mustParseFlagSet(fs, args)
-
-	remaining := fs.Args()
-	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd counter-increment [-delta N] [options] <store-id>\n")
-		os.Exit(1)
-	}
-	storeID := remaining[0]
-
-	reqBody := map[string]interface{}{"delta": *delta}
-	bodyJSON, _ := json.Marshal(reqBody)
-
-	headers := map[string]string{
-		"X-Customer-ID": *customerID,
-		"Content-Type":  "application/json",
-	}
-	if *ttl > 0 {
-		headers["BigBunny-Not-Valid-After"] = fmt.Sprintf("%d", *ttl)
-	}
-
-	resp, err := doUDSRequestWithHeaders("POST", *udsPath, "/api/v1/increment/"+storeID, strings.NewReader(string(bodyJSON)), headers)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	checkResponse(resp, "counter-increment")
-
-	body, _ := io.ReadAll(resp.Body)
-
-	// Pretty print JSON response
-	var result map[string]interface{}
-	if err := json.Unmarshal(body, &result); err == nil {
-		prettyJSON, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Println(string(prettyJSON))
-	} else {
-		fmt.Println(string(body))
-	}
-	printWarning(resp)
+	runCounterDeltaCommand("increment", args)
 }
 
 func runCounterDecrementCommand(args []string) {
-	fs := flag.NewFlagSet("counter-decrement", flag.ExitOnError)
+	runCounterDeltaCommand("decrement", args)
+}
+
+func runCounterDeltaCommand(op string, args []string) {
+	fs := flag.NewFlagSet("counter-"+op, flag.ExitOnError)
 	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
 	customerID := fs.String("customer", "test-customer", "customer ID")
-	delta := fs.Int64("delta", 1, "amount to decrement (default 1)")
+	delta := fs.Int64("delta", 1, "amount to "+op+" (default 1)")
 	ttl := fs.Int("ttl", 0, "TTL in seconds (0 = keep existing)")
 	mustParseFlagSet(fs, args)
 
 	remaining := fs.Args()
 	if len(remaining) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: bbd counter-decrement [-delta N] [options] <store-id>\n")
+		fmt.Fprintf(os.Stderr, "usage: bbd counter-%s [-delta N] [options] <store-id>\n", op)
 		os.Exit(1)
 	}
 	storeID := remaining[0]
 
-	reqBody := map[string]interface{}{"delta": *delta}
+	reqBody := map[string]any{"delta": *delta}
 	bodyJSON, _ := json.Marshal(reqBody)
 
 	headers := map[string]string{
@@ -1231,25 +1202,15 @@ func runCounterDecrementCommand(args []string) {
 		headers["BigBunny-Not-Valid-After"] = fmt.Sprintf("%d", *ttl)
 	}
 
-	resp, err := doUDSRequestWithHeaders("POST", *udsPath, "/api/v1/decrement/"+storeID, strings.NewReader(string(bodyJSON)), headers)
+	resp, err := doUDSRequestWithHeaders("POST", *udsPath, "/api/v1/"+op+"/"+storeID, strings.NewReader(string(bodyJSON)), headers)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	checkResponse(resp, "counter-decrement")
-
-	body, _ := io.ReadAll(resp.Body)
-
-	// Pretty print JSON response
-	var result map[string]interface{}
-	if err := json.Unmarshal(body, &result); err == nil {
-		prettyJSON, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Println(string(prettyJSON))
-	} else {
-		fmt.Println(string(body))
-	}
+	checkResponse(resp, "counter-"+op)
+	printJSONResponse(resp.Body)
 	printWarning(resp)
 }
 
