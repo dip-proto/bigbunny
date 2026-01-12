@@ -24,7 +24,7 @@ func TestAPIIntegration(t *testing.T) {
 	hosts := []*routing.Host{
 		{ID: "test-host", Address: "localhost:9999", Healthy: true},
 	}
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 
 	replicaCfg := replica.DefaultConfig("test-host", "test-site")
 	replicaMgr := replica.NewManager(replicaCfg, storeMgr, hasher)
@@ -444,7 +444,7 @@ func TestLeaderChangedErrorCode(t *testing.T) {
 	hosts := []*routing.Host{
 		{ID: "test-host", Address: "localhost:9999", Healthy: true},
 	}
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 
 	replicaCfg := replica.DefaultConfig("test-host", "test-site")
 	replicaMgr := replica.NewManager(replicaCfg, storeMgr, hasher)
@@ -514,7 +514,7 @@ func TestCapacityExceeded(t *testing.T) {
 	hosts := []*routing.Host{
 		{ID: "test-host", Address: "localhost:9999", Healthy: true},
 	}
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 
 	replicaCfg := replica.DefaultConfig("test-host", "test-site")
 	replicaMgr := replica.NewManager(replicaCfg, storeMgr, hasher)
@@ -596,7 +596,7 @@ func TestMemoryTrackingOnDelete(t *testing.T) {
 	hosts := []*routing.Host{
 		{ID: "test-host", Address: "localhost:9999", Healthy: true},
 	}
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 
 	replicaCfg := replica.DefaultConfig("test-host", "test-site")
 	replicaMgr := replica.NewManager(replicaCfg, storeMgr, hasher)
@@ -690,7 +690,7 @@ func TestCapacityExceededOnCompleteModify(t *testing.T) {
 	hosts := []*routing.Host{
 		{ID: "test-host", Address: "localhost:9999", Healthy: true},
 	}
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 
 	replicaCfg := replica.DefaultConfig("test-host", "test-site")
 	replicaMgr := replica.NewManager(replicaCfg, storeMgr, hasher)

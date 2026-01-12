@@ -14,7 +14,7 @@ func TestIsLockStateUnknown_InitialPrimary(t *testing.T) {
 	hosts := []*routing.Host{
 		{ID: "host1", Address: "localhost:8081", Healthy: true},
 	}
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 	config := replica.DefaultConfig("host1", "local")
 
 	mgr := replica.NewManager(config, storeMgr, hasher)
@@ -32,7 +32,7 @@ func TestIsLockStateUnknown_AfterPromotion(t *testing.T) {
 	hosts := []*routing.Host{
 		{ID: "host1", Address: "localhost:8081", Healthy: true},
 	}
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 	config := replica.DefaultConfig("host1", "local")
 	config.ModifyTimeout = 100 * time.Millisecond // short for testing
 
@@ -68,7 +68,7 @@ func TestIsLockStateUnknown_Secondary(t *testing.T) {
 	hosts := []*routing.Host{
 		{ID: "host1", Address: "localhost:8081", Healthy: true},
 	}
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 	config := replica.DefaultConfig("host1", "local")
 
 	mgr := replica.NewManager(config, storeMgr, hasher)
@@ -86,7 +86,7 @@ func TestApplyReplication_LockAcquired(t *testing.T) {
 	hosts := []*routing.Host{
 		{ID: "host1", Address: "localhost:8081", Healthy: true},
 	}
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 	config := replica.DefaultConfig("host1", "local")
 
 	mgr := replica.NewManager(config, storeMgr, hasher)
@@ -129,7 +129,7 @@ func TestApplyReplication_LockReleased(t *testing.T) {
 	hosts := []*routing.Host{
 		{ID: "host1", Address: "localhost:8081", Healthy: true},
 	}
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 	config := replica.DefaultConfig("host1", "local")
 
 	mgr := replica.NewManager(config, storeMgr, hasher)
@@ -171,7 +171,7 @@ func TestApplyReplication_UpdateClearsLock(t *testing.T) {
 	hosts := []*routing.Host{
 		{ID: "host1", Address: "localhost:8081", Healthy: true},
 	}
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 	config := replica.DefaultConfig("host1", "local")
 
 	mgr := replica.NewManager(config, storeMgr, hasher)
@@ -222,7 +222,7 @@ func TestApplyReplication_StaleEpochRejected(t *testing.T) {
 	hosts := []*routing.Host{
 		{ID: "host1", Address: "localhost:8081", Healthy: true},
 	}
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 	config := replica.DefaultConfig("host1", "local")
 
 	mgr := replica.NewManager(config, storeMgr, hasher)
@@ -265,7 +265,7 @@ func TestApplyReplication_RejectsWhenJoining(t *testing.T) {
 	hosts := []*routing.Host{
 		{ID: "host1", Address: "localhost:8081", Healthy: true},
 	}
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 	config := replica.DefaultConfig("host1", "local")
 
 	mgr := replica.NewManager(config, storeMgr, hasher)
@@ -298,7 +298,7 @@ func TestHandleHeartbeat_DemotesToJoining(t *testing.T) {
 		{ID: "host1", Address: "localhost:8081", Healthy: true},
 		{ID: "host2", Address: "localhost:8082", Healthy: true},
 	}
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 	config := replica.DefaultConfig("host1", "local")
 
 	mgr := replica.NewManager(config, storeMgr, hasher)
@@ -334,7 +334,7 @@ func TestHandleHeartbeat_SecondaryToJoining(t *testing.T) {
 	hosts := []*routing.Host{
 		{ID: "host1", Address: "localhost:8081", Healthy: true},
 	}
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 	config := replica.DefaultConfig("host1", "local")
 
 	mgr := replica.NewManager(config, storeMgr, hasher)
@@ -364,7 +364,7 @@ func TestTombstonesSnapshot(t *testing.T) {
 	hosts := []*routing.Host{
 		{ID: "host1", Address: "localhost:8081", Healthy: true},
 	}
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 	config := replica.DefaultConfig("host1", "local")
 
 	mgr := replica.NewManager(config, storeMgr, hasher)
@@ -397,7 +397,7 @@ func TestResetTombstones(t *testing.T) {
 	hosts := []*routing.Host{
 		{ID: "host1", Address: "localhost:8081", Healthy: true},
 	}
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 	config := replica.DefaultConfig("host1", "local")
 
 	mgr := replica.NewManager(config, storeMgr, hasher)
@@ -433,7 +433,7 @@ func TestHandleHeartbeat_RetriesRecoveryWhenJoining(t *testing.T) {
 		{ID: "host1", Address: "localhost:8081", Healthy: true},
 		{ID: "host2", Address: "localhost:8082", Healthy: true},
 	}
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 	config := replica.DefaultConfig("host1", "local")
 
 	mgr := replica.NewManager(config, storeMgr, hasher)

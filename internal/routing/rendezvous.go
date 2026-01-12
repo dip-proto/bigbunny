@@ -23,13 +23,21 @@ type ReplicaSet struct {
 // RendezvousHasher implements rendezvous (highest random weight) hashing
 // for deterministic shard-to-host mapping. All nodes compute the same
 // placement without coordination.
+//
+// The routing secret prevents adversaries from pre-computing which shardIDs
+// map to which hosts, protecting against targeted host overload attacks.
 type RendezvousHasher struct {
-	hosts []*Host
+	hosts         []*Host
+	routingSecret string
 }
 
-// NewRendezvousHasher creates a hasher with the given host list.
-func NewRendezvousHasher(hosts []*Host) *RendezvousHasher {
-	return &RendezvousHasher{hosts: hosts}
+// NewRendezvousHasher creates a hasher with the given host list and routing secret.
+// The routing secret must be shared across all nodes in the cluster.
+func NewRendezvousHasher(hosts []*Host, routingSecret string) *RendezvousHasher {
+	return &RendezvousHasher{
+		hosts:         hosts,
+		routingSecret: routingSecret,
+	}
 }
 
 // UpdateHosts replaces the host list.
@@ -38,7 +46,7 @@ func (r *RendezvousHasher) UpdateHosts(hosts []*Host) {
 }
 
 // GetReplicaSet returns the primary and secondary hosts for a shard.
-// Uses rendezvous hashing: each host is scored by hash(shardID, hostID),
+// Uses rendezvous hashing: each host is scored by hash(secret, shardID, hostID),
 // and the two highest-scoring healthy hosts become primary and secondary.
 func (r *RendezvousHasher) GetReplicaSet(shardID string) *ReplicaSet {
 	if len(r.hosts) == 0 {
@@ -93,6 +101,9 @@ func (r *RendezvousHasher) GetReplicaSet(shardID string) *ReplicaSet {
 
 func (r *RendezvousHasher) hash(shardID, hostID string) uint64 {
 	h := sha256.New()
+	// Include routing secret to prevent adversaries from pre-computing
+	// which shardIDs map to which hosts
+	h.Write([]byte(r.routingSecret))
 	h.Write([]byte(shardID))
 	h.Write([]byte(hostID))
 	sum := h.Sum(nil)

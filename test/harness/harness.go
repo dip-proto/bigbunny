@@ -252,7 +252,7 @@ func NewCluster(cfg *ClusterConfig) (*Cluster, error) {
 			Healthy: true,
 		}
 	}
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 
 	// Create nodes
 	for i := 0; i < cfg.NodeCount; i++ {

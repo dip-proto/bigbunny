@@ -39,21 +39,27 @@ You should see usage information listing all the available commands and flags.
 
 ## Configuring for Development vs Production
 
-Big Bunny needs encryption keys to secure store IDs and an internal token to authenticate replication traffic between nodes. During development, you can use the `--dev` flag to skip this configuration and use weak, deterministic keys. This is convenient for testing but completely insecure, so never use it in production.
+Big Bunny needs three secrets: encryption keys to secure store IDs, a routing secret to prevent targeted host attacks, and an internal token to authenticate replication traffic between nodes. During development, you can use the `--dev` flag to skip this configuration and use weak, deterministic values. This is convenient for testing but completely insecure, so never use it in production.
 
-For production, you'll need to generate real encryption keys and an internal authentication token. The encryption keys should be 32 bytes of random data (required for AES-128-SIV), typically represented as 64 hexadecimal characters. You can generate these with OpenSSL:
+For production, you'll need to generate real secrets. The encryption keys should be 32 bytes of random data (required for AES-128-SIV), typically represented as 64 hexadecimal characters:
 
 ```bash
 openssl rand -hex 32
 ```
 
-This produces something like `a1b2c3d4e5f6...` (64 hex characters representing 32 bytes). You'll also need an internal token for authenticating replication traffic between nodes:
+This produces something like `a1b2c3d4e5f6...` (64 hex characters representing 32 bytes). You'll also need a routing secret (32 bytes) to prevent attackers from pre-computing which stores map to which hosts:
+
+```bash
+openssl rand -hex 32
+```
+
+And an internal token for authenticating replication traffic between nodes:
 
 ```bash
 openssl rand -hex 16
 ```
 
-This gives you a 16-byte (128-bit) random token. Save these somewhere secure—you'll need them for every node in your cluster.
+This gives you a 16-byte (128-bit) random token. Save all three secrets somewhere secure—you'll need them for every node in your cluster.
 
 ### Development Mode
 
@@ -185,6 +191,7 @@ Now start Big Bunny with these keys:
   --uds=/tmp/bbd.sock \
   --store-keys="0:$(openssl rand -hex 32)" \
   --store-key-current=0 \
+  --routing-secret="$(openssl rand -hex 32)" \
   --internal-token="$(openssl rand -hex 16)"
 ```
 
@@ -196,6 +203,7 @@ If you want to use environment variables instead (recommended), create a file wi
 # /etc/bigbunny/secrets.env
 export SERIALD_STORE_KEYS="0:$(openssl rand -hex 32)"
 export SERIALD_STORE_KEY_CURRENT=0
+export SERIALD_ROUTING_SECRET="$(openssl rand -hex 32)"
 export SERIALD_INTERNAL_TOKEN="$(openssl rand -hex 16)"
 ```
 
@@ -218,11 +226,12 @@ The real value of Big Bunny comes from having two nodes that replicate to each o
 
 First, decide which node will be the primary. This is deterministic based on host IDs—the lexicographically smaller ID becomes primary. So if you're setting up `node1` and `node2`, node1 will be primary because it sorts before node2.
 
-Both nodes need to share the same encryption keys and internal token. Generate these once and use them on both nodes:
+Both nodes need to share the same encryption keys, routing secret, and internal token. Generate these once and use them on both nodes:
 
 ```bash
 # Generate once, use everywhere
 STORE_KEY=$(openssl rand -hex 32)
+ROUTING_SECRET=$(openssl rand -hex 32)
 INTERNAL_TOKEN=$(openssl rand -hex 16)
 ```
 
@@ -236,6 +245,7 @@ On the first node (which will become primary):
   --peers=node2@10.0.1.2:8082 \
   --store-keys="0:$STORE_KEY" \
   --store-key-current=0 \
+  --routing-secret="$ROUTING_SECRET" \
   --internal-token="$INTERNAL_TOKEN"
 ```
 
@@ -249,6 +259,7 @@ On the second node (which will become secondary):
   --peers=node1@10.0.1.1:8081 \
   --store-keys="0:$STORE_KEY" \
   --store-key-current=0 \
+  --routing-secret="$ROUTING_SECRET" \
   --internal-token="$INTERNAL_TOKEN"
 ```
 
@@ -287,6 +298,7 @@ Update your configuration to include both keys and set the current one to the ne
   --uds=/tmp/bbd.sock \
   --store-keys="0:$OLD_KEY,1:$NEW_KEY" \
   --store-key-current=1 \
+  --routing-secret="$ROUTING_SECRET" \
   --internal-token="$INTERNAL_TOKEN"
 ```
 
@@ -301,6 +313,7 @@ Wait for all stores encrypted with the old key to expire. The default TTL is 14 
   --uds=/tmp/bbd.sock \
   --store-keys="1:$NEW_KEY" \
   --store-key-current=1 \
+  --routing-secret="$ROUTING_SECRET" \
   --internal-token="$INTERNAL_TOKEN"
 ```
 

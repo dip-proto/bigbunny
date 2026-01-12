@@ -100,7 +100,7 @@ func TestRendezvousHashing(t *testing.T) {
 		{ID: "host3", Address: "localhost:8083", Healthy: true},
 	}
 
-	hasher := routing.NewRendezvousHasher(hosts)
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
 
 	// Same shard should always map to same hosts
 	rs1 := hasher.GetReplicaSet("shard-abc")

@@ -90,14 +90,16 @@ For a deep dive into how it all works, see the [Architecture Guide](doc/architec
 For production, you'll want proper encryption keys and a two-node cluster:
 
 ```bash
-# Generate keys
+# Generate keys and secrets
 KEY=$(openssl rand -hex 32)
+ROUTING_SECRET=$(openssl rand -hex 32)
 TOKEN=$(openssl rand -hex 16)
 
 # Node 1 (becomes primary: node1 < node2 lexicographically)
 ./bbd --host-id=node1 --tcp=:8081 --uds=/var/run/bbd/bbd.sock \
   --peers=node2@node2-host:8082 \
   --store-keys="0:$KEY" --store-key-current=0 \
+  --routing-secret="$ROUTING_SECRET" \
   --internal-token="$TOKEN" \
   --memory-limit=4294967296
 
@@ -105,6 +107,7 @@ TOKEN=$(openssl rand -hex 16)
 ./bbd --host-id=node2 --tcp=:8082 --uds=/var/run/bbd/bbd.sock \
   --peers=node1@node1-host:8081 \
   --store-keys="0:$KEY" --store-key-current=0 \
+  --routing-secret="$ROUTING_SECRET" \
   --internal-token="$TOKEN" \
   --memory-limit=4294967296
 ```

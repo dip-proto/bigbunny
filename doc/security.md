@@ -58,6 +58,37 @@ In the current implementation, this token is sent in plaintext over the network.
 
 Development mode bypasses the internal token requirement and logs a warning. This makes testing easier but obviously isn't suitable for production. The warning is loud and annoying on purpose—it should be impossible to accidentally run in development mode and not notice.
 
+## Routing Secret
+
+The routing secret prevents adversaries from targeting specific hosts with resource exhaustion attacks. Without this protection, an attacker could pre-compute which store IDs or named stores map to which hosts, then deliberately create stores that all land on a single victim host.
+
+Big Bunny uses rendezvous hashing to distribute stores across hosts. The hash function is `hash(routingSecret, shardID, hostID)`. Without knowing the routing secret, an attacker cannot predict which combination of inputs will produce the highest hash value for a particular host.
+
+There are two attack vectors this protects against. First, for anonymous stores, the server generates a random shardID using `crypto/rand`. While clients can't directly control this value, they can execute a selection attack: create many stores, observe (via timing or network analysis) which host served each request, keep only stores that landed on the target host, and delete the rest. With the routing secret, this attack becomes much more expensive because the attacker can't predict or verify the mapping offline.
+
+Second, and more critically, named stores are vulnerable to targeted attacks because the routing key is `hash(routingSecret, customerID + ":" + name)`. Both customerID and name are client-controlled. Without the routing secret, an attacker could pre-compute combinations that target a specific host:
+
+```python
+# Without routing secret (VULNERABLE)
+for customer in ["cust001", "cust002", ...]:
+    for name in ["session_001", "session_002", ...]:
+        key = customer + ":" + name
+        if hash(key, "victim_host") > threshold:
+            print(f"Use {customer}:{name} to hit victim_host")
+```
+
+With the routing secret, this offline computation is impossible. The attacker would need to know the secret to predict mappings, effectively reducing the attack to online trial-and-error which is detectable and rate-limitable.
+
+Generate the routing secret the same way you generate encryption keys: `openssl rand -hex 32` gives you a 32-byte random value. All nodes in a cluster must share the same routing secret. If they don't, stores will hash to different replica sets on different nodes, breaking replication consistency.
+
+Store the routing secret with the same security precautions as encryption keys. Don't commit it to version control, don't log it, and use secrets management systems when available.
+
+The routing secret can be rotated if needed, though it's disruptive. Changing it causes all stores to rehash to different replica sets, triggering data redistribution across the cluster. However, this disruption is actually valuable during a selection attack: if an attacker has mapped stores to hosts through trial-and-error, rotating the routing secret immediately invalidates their mapping and redistributes all data. The disruption breaks their attack.
+
+Think of it this way: encryption keys protect data confidentiality (if compromised, rotate immediately even if disruptive). The routing secret protects load distribution (if an attack succeeds, rotate to recover). Both accept disruption as a necessary cost of security response.
+
+The routing secret is required in production mode. Development mode uses a deterministic "dev" value for testing, which provides no security but simplifies local testing and debugging.
+
 ## Unix Socket Security
 
 The Unix socket is how clients access Big Bunny locally. By default, it's created with mode 0600, meaning only the owner can read and write. This is restrictive by design. If you need multiple users to access it, you have options.
@@ -88,7 +119,9 @@ Let's walk through various attack scenarios and see how Big Bunny handles them.
 
 **Man-in-the-middle on replication**: An attacker intercepts replication traffic between nodes. With the current plaintext implementation, they can read the traffic and steal the internal token. With that token, they could inject fake traffic. The mitigation is to run on trusted networks. The proper fix is mTLS, which would encrypt the traffic and verify peer certificates.
 
-**Denial of service**: An attacker floods with requests to exhaust resources. Big Bunny has some protections. Memory limits prevent unbounded memory consumption. Lock timeouts prevent indefinite locking. Per-store serialization limits the blast radius. But fundamentally, if someone sends millions of requests per second, they can overwhelm any system. The real defense is rate limiting at the load balancer or network layer, not in Big Bunny itself.
+**Targeted host overload**: An attacker tries to force all their stores onto a single victim host to exhaust its resources. For anonymous stores, the attacker could create many stores and use timing/network analysis to identify which host served each request, keeping only stores on the target host. For named stores, this is more dangerous: the attacker could pre-compute customerID:name combinations that hash to the victim host and create stores with those exact names. The routing secret prevents both attacks. Without knowing the secret, offline pre-computation is impossible, and online trial-and-error becomes detectable and rate-limitable.
+
+**Denial of service**: An attacker floods with requests to exhaust resources. Big Bunny has some protections. Memory limits prevent unbounded memory consumption. Lock timeouts prevent indefinite locking. Per-store serialization limits the blast radius. The routing secret prevents targeted attacks where all traffic goes to one host. But fundamentally, if someone sends millions of requests per second distributed across all hosts, they can overwhelm any system. The real defense is rate limiting at the load balancer or network layer, not in Big Bunny itself.
 
 **Information leakage**: An attacker tries to infer information from store IDs or error messages. Store ID length reveals the site name length, which is minor. Deterministic encryption means identical plaintexts produce identical ciphertexts, but the unique identifier in each store ID prevents this from being useful. Error messages are generic—both invalid store IDs and wrong-customer IDs return "400 Bad Request" without details. Timing attacks are theoretically possible, but AES-SIV is implemented in constant time in the crypto libraries Big Bunny uses.
 
@@ -101,20 +134,23 @@ Here's a summary of the risk levels:
 | Cross-customer access  | None     | Yes (per-customer keys + AAD)   |
 | Within-customer replay | Low      | Partial (by design for retries) |
 | Cross-customer replay  | None     | Yes (key derivation + AAD)      |
+| Targeted host overload | None     | Yes (routing secret)            |
 | Replication injection  | Moderate | Partial (token, but plaintext)  |
 | Man-in-the-middle      | Moderate | No (plaintext currently)        |
-| Denial of service      | Moderate | Partial (resource limits)       |
+| Denial of service      | Moderate | Partial (resource + routing)    |
 | Information leakage    | Low      | Yes (minimal leakage)           |
 
 ## Best Practices for Deployment
 
 When deploying Big Bunny in production, follow these practices to maintain security.
 
-Generate strong keys using cryptographically secure random sources. The command `openssl rand -hex 32` works on most systems. Don't use weak random sources or predictable values. Never reuse keys across environments—development, staging, and production should each have their own keys.
+Generate strong keys and secrets using cryptographically secure random sources. The command `openssl rand -hex 32` works on most systems. Don't use weak random sources or predictable values. Never reuse keys or secrets across environments—development, staging, and production should each have their own.
 
-Store keys securely. Use a secrets management system if available. If not, store them in files with mode 0600 and ownership restricted to the Big Bunny user. Never commit keys to version control. Never log keys in application logs. Never pass keys via command-line arguments where they'd be visible in process listings.
+Store keys and secrets securely. Use a secrets management system if available. If not, store them in files with mode 0600 and ownership restricted to the Big Bunny user. Never commit keys or secrets to version control. Never log them in application logs. Never pass them via command-line arguments where they'd be visible in process listings.
 
-Rotate keys regularly. Every 90 days is reasonable for most deployments. Add the new key, mark it current, deploy to all nodes, wait for old stores to expire, then remove the old key. If a key is compromised, rotate immediately even if it means invalidating active store IDs.
+Rotate encryption keys regularly. Every 90 days is reasonable for most deployments. Add the new key, mark it current, deploy to all nodes, wait for old stores to expire, then remove the old key. If a key is compromised, rotate immediately even if it means invalidating active store IDs.
+
+The routing secret can be rotated to recover from selection attacks. If you detect an attacker successfully mapping stores to specific hosts (through unusual load patterns or traffic analysis), rotate the routing secret to redistribute all stores and break their mapping. The disruption is intentional—it invalidates the attacker's work and forces them to start over. Monitor for repeated selection attacks; if they persist, investigate how the attacker is observing routing (timing attacks, network analysis) and add additional defenses at those layers.
 
 Run on private networks. Big Bunny nodes should communicate over a private network that's not accessible from the internet. Use firewalls to restrict who can reach the TCP replication ports. Only peer nodes should be able to connect.
 
