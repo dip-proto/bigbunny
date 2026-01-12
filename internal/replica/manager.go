@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -202,22 +203,10 @@ func (m *Manager) GetLeaderAddress() string {
 	}
 
 	// Sort by ID (deterministic ordering)
-	sortedHosts := make([]*routing.Host, len(hosts))
-	copy(sortedHosts, hosts)
-	sortHostsByID(sortedHosts)
+	sortedHosts := slices.Clone(hosts)
+	routing.SortHostsByID(sortedHosts)
 
 	return sortedHosts[0].Address
-}
-
-// sortHostsByID sorts hosts by ID in lexicographic order (deterministic)
-func sortHostsByID(hosts []*routing.Host) {
-	for i := 0; i < len(hosts)-1; i++ {
-		for j := i + 1; j < len(hosts); j++ {
-			if hosts[j].ID < hosts[i].ID {
-				hosts[i], hosts[j] = hosts[j], hosts[i]
-			}
-		}
-	}
 }
 
 // RecoveryAttempts returns the total number of recovery attempts (for testing/metrics).

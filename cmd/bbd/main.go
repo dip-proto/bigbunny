@@ -317,7 +317,7 @@ func buildHostList(selfID, selfAddr, peersStr string) []*routing.Host {
 	}
 
 	// Sort hosts by ID for deterministic ordering across all nodes
-	sortHostsByID(hosts)
+	routing.SortHostsByID(hosts)
 
 	return hosts
 }
@@ -343,16 +343,6 @@ func parsePeer(peer string) (id, addr string, valid bool) {
 		return "", "", false
 	}
 	return peer, peer, true
-}
-
-func sortHostsByID(hosts []*routing.Host) {
-	for i := 0; i < len(hosts)-1; i++ {
-		for j := i + 1; j < len(hosts); j++ {
-			if hosts[j].ID < hosts[i].ID {
-				hosts[i], hosts[j] = hosts[j], hosts[i]
-			}
-		}
-	}
 }
 
 func splitPeers(s string) []string {

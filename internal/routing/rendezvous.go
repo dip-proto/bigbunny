@@ -1,9 +1,10 @@
 package routing
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/binary"
-	"sort"
+	"slices"
 )
 
 // Host represents a node in the cluster.
@@ -66,8 +67,8 @@ func (r *RendezvousHasher) GetReplicaSet(shardID string) *ReplicaSet {
 		})
 	}
 
-	sort.Slice(scores, func(i, j int) bool {
-		return scores[i].score > scores[j].score
+	slices.SortFunc(scores, func(a, b scored) int {
+		return cmp.Compare(b.score, a.score) // descending order
 	})
 
 	rs := &ReplicaSet{ShardID: shardID}
@@ -122,4 +123,11 @@ func (r *RendezvousHasher) GetHealthyHosts() []*Host {
 		}
 	}
 	return healthy
+}
+
+// SortHostsByID sorts hosts by ID in lexicographic order for deterministic ordering.
+func SortHostsByID(hosts []*Host) {
+	slices.SortFunc(hosts, func(a, b *Host) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
 }
