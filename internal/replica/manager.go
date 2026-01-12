@@ -16,6 +16,7 @@ import (
 	"github.com/dip-proto/bigbunny/internal/store"
 )
 
+// Role represents the current state of a node in the replication cluster.
 type Role int
 
 const (
@@ -41,6 +42,7 @@ func (r Role) String() string {
 	}
 }
 
+// Config holds the settings for running a replica manager, including timeouts, addresses, and optional test hooks.
 type Config struct {
 	HostID             string
 	Site               string
@@ -62,6 +64,7 @@ type Config struct {
 	BroadcastReplication bool             // if true, replicate to all hosts instead of per-shard (test-only)
 }
 
+// DefaultConfig returns a Config with sensible defaults for production use.
 func DefaultConfig(hostID, site string) *Config {
 	return &Config{
 		HostID:             hostID,
@@ -74,6 +77,7 @@ func DefaultConfig(hostID, site string) *Config {
 	}
 }
 
+// Manager coordinates replication between nodes, handles failover, and maintains cluster consistency through heartbeats, lease checks, and tombstone tracking.
 type Manager struct {
 	config   *Config
 	store    *store.Manager
@@ -107,6 +111,7 @@ type Manager struct {
 
 const recoveryRetryInterval = time.Second // minimum time between recovery attempts
 
+// NewManager creates a new replication manager with the given configuration, store manager, and routing hasher.
 func NewManager(config *Config, storeMgr *store.Manager, hasher *routing.RendezvousHasher) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -143,10 +148,12 @@ func NewManager(config *Config, storeMgr *store.Manager, hasher *routing.Rendezv
 	return m
 }
 
+// SetRegistry attaches a registry manager to enable named store replication and cleanup.
 func (m *Manager) SetRegistry(reg *registry.Manager) {
 	m.registry = reg
 }
 
+// GetClient returns the HTTP client used for internal cluster communication.
 func (m *Manager) GetClient() *http.Client {
 	return m.client
 }
@@ -157,6 +164,7 @@ func (m *Manager) setInternalAuth(req *http.Request) {
 	}
 }
 
+// Start launches all background goroutines for replication, heartbeats, lease checking, and garbage collection.
 func (m *Manager) Start() {
 	go m.replicationLoop()
 	go m.registryReplicationLoop()
@@ -167,16 +175,19 @@ func (m *Manager) Start() {
 	go m.expiryGCLoop()
 }
 
+// Stop signals all background goroutines to shut down.
 func (m *Manager) Stop() {
 	m.cancel()
 }
 
+// Role returns the current role of this node in the cluster.
 func (m *Manager) Role() Role {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.role
 }
 
+// LeaderEpoch returns the current leader epoch, which is incremented each time a new primary takes over.
 func (m *Manager) LeaderEpoch() uint64 {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -216,6 +227,7 @@ func (m *Manager) RecoveryAttempts() int {
 	return m.recoveryAttempts
 }
 
+// SetRole changes the role of this node and updates the epoch when becoming primary.
 func (m *Manager) SetRole(role Role) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -247,9 +259,11 @@ func (m *Manager) ForcePromote() {
 	m.lastLeaderSeen = m.now()
 	if wasNotPrimary {
 		m.lastPromotionAt = m.now()
+		log.Printf("promoted to PRIMARY (epoch=%d)", m.leaderEpoch)
 	}
 }
 
+// IsLockStateUnknown returns true during the brief window after failover when we cannot be sure whether a lock was held on the old primary.
 func (m *Manager) IsLockStateUnknown(storeID string) (unknown bool, retryAfter time.Duration) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -273,6 +287,7 @@ func (m *Manager) IsLockStateUnknown(storeID string) (unknown bool, retryAfter t
 	return false, 0
 }
 
+// QueueReplication adds a message to the async replication queue to be sent to secondaries.
 func (m *Manager) QueueReplication(msg *ReplicationMessage) {
 	msg.SourceHost = m.config.HostID
 	msg.Timestamp = m.now()
@@ -358,6 +373,7 @@ func (m *Manager) recordReplicationSuccess() {
 	m.replicationFailCount = 0
 }
 
+// IsSecondaryHealthy returns false if replication to the secondary has recently failed, which triggers degraded write warnings.
 func (m *Manager) IsSecondaryHealthy() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -459,6 +475,7 @@ func (m *Manager) sendHeartbeat(address string, hb *HeartbeatMessage) {
 	defer func() { _ = resp.Body.Close() }()
 }
 
+// HandleHeartbeat processes an incoming heartbeat from another node and may trigger role changes or recovery if a higher epoch is seen.
 func (m *Manager) HandleHeartbeat(hb *HeartbeatMessage) *HeartbeatAck {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -618,6 +635,7 @@ func (m *Manager) AddTombstoneReplicated(storeID, customerID string) {
 	m.tombstoneCustomerIndex[customerID][storeID] = struct{}{}
 }
 
+// IsTombstoned returns true if the store was recently deleted and should not be resurrected.
 func (m *Manager) IsTombstoned(storeID string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -658,6 +676,7 @@ func (m *Manager) resetTombstonesLocked(entries []TombstoneEntry) {
 	}
 }
 
+// ApplyReplication processes an incoming replication message from the primary and updates local state accordingly.
 func (m *Manager) ApplyReplication(msg *ReplicationMessage) error {
 	if m.Role() == RoleJoining {
 		return ErrJoinInProgress
@@ -746,6 +765,7 @@ func (m *Manager) ApplyReplication(msg *ReplicationMessage) error {
 	}
 }
 
+// GetStatus returns a map of current cluster state useful for monitoring and debugging.
 func (m *Manager) GetStatus() map[string]any {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -862,6 +882,7 @@ func (m *Manager) sendRegistryReplicationMessage(address string, msg *RegistryRe
 	return nil
 }
 
+// QueueRegistryReplication adds a registry message to the async replication queue.
 func (m *Manager) QueueRegistryReplication(msg *RegistryReplicationMessage) {
 	msg.SourceHost = m.config.HostID
 	msg.Timestamp = m.now()
@@ -874,6 +895,7 @@ func (m *Manager) QueueRegistryReplication(msg *RegistryReplicationMessage) {
 	}
 }
 
+// ApplyRegistryReplication processes an incoming registry replication message and updates the local registry.
 func (m *Manager) ApplyRegistryReplication(msg *RegistryReplicationMessage) error {
 	if m.Role() == RoleJoining {
 		return ErrJoinInProgress
@@ -910,6 +932,7 @@ func (m *Manager) ApplyRegistryReplication(msg *RegistryReplicationMessage) erro
 	}
 }
 
+// Registry returns the attached registry manager, or nil if none is set.
 func (m *Manager) Registry() *registry.Manager {
 	return m.registry
 }
@@ -1249,7 +1272,7 @@ func (m *Manager) fetchStoreSnapshot(primaryAddr string) (*SnapshotData, error) 
 	return &snapshot, nil
 }
 
-// RegistrySnapshotResponse matches the API response structure.
+// RegistrySnapshotResponse holds the registry entries and epoch returned when fetching a snapshot from the primary during recovery.
 type RegistrySnapshotResponse struct {
 	Entries     []*registry.Entry `json:"entries"`
 	LeaderEpoch uint64            `json:"leader_epoch"`

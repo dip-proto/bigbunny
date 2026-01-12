@@ -17,6 +17,7 @@ import (
 	"github.com/dip-proto/bigbunny/internal/store"
 )
 
+// Server handles HTTP requests for the bbd API, including public endpoints for store operations and internal endpoints for replication.
 type Server struct {
 	store            *store.Manager
 	replica          *replica.Manager
@@ -27,6 +28,7 @@ type Server struct {
 	rateLimiter      *ratelimit.Limiter // Per-customer rate limiter (nil if rate limiting disabled)
 }
 
+// Config holds the server configuration including site identity, TTL defaults, size limits, and cryptographic settings.
 type Config struct {
 	Site          string
 	HostID        string
@@ -37,8 +39,7 @@ type Config struct {
 	InternalToken string // Shared secret for internal endpoints (forwarding)
 }
 
-// CreateRequest is the JSON request body for creating stores (optional, backwards compatible).
-// If body is not valid JSON, it's treated as blob data.
+// CreateRequest is the JSON body for creating stores. If the body is not valid JSON or lacks a type field, it is treated as raw blob data for backwards compatibility.
 type CreateRequest struct {
 	Type  string  `json:"type"`           // "blob" or "counter"
 	Value *int64  `json:"value"`          // For counter type: initial value
@@ -47,7 +48,7 @@ type CreateRequest struct {
 	Data  *string `json:"data,omitempty"` // For blob type: base64-encoded data (optional)
 }
 
-// CounterResponse is returned from counter operations (increment, get).
+// CounterResponse is returned from counter operations like increment, decrement, and snapshot. It includes the current value, version for optimistic concurrency, and optional bounds information.
 type CounterResponse struct {
 	Value   int64  `json:"value"`
 	Version uint64 `json:"version"`
@@ -56,11 +57,12 @@ type CounterResponse struct {
 	Max     *int64 `json:"max,omitempty"`
 }
 
-// IncrementRequest is the JSON request body for increment/decrement operations.
+// IncrementRequest is the JSON body for increment and decrement operations, specifying the delta to apply to the counter.
 type IncrementRequest struct {
 	Delta int64 `json:"delta"`
 }
 
+// DefaultConfig returns a Config with sensible defaults for local development, including a two-week TTL and 2 KiB body limit.
 func DefaultConfig() *Config {
 	return &Config{
 		Site:          "local",
@@ -71,6 +73,7 @@ func DefaultConfig() *Config {
 	}
 }
 
+// NewServer creates a new API server with the given configuration, store manager, replica manager, hasher for routing, and optional rate limiter.
 func NewServer(cfg *Config, storeMgr *store.Manager, replicaMgr *replica.Manager, hasher *routing.RendezvousHasher, rateLimiter *ratelimit.Limiter) *Server {
 	return &Server{
 		store:   storeMgr,
@@ -90,6 +93,7 @@ func NewServer(cfg *Config, storeMgr *store.Manager, replicaMgr *replica.Manager
 	}
 }
 
+// Shutdown releases resources held by the server, including closing idle HTTP connections used for forwarding.
 func (s *Server) Shutdown() {
 	s.forwardingClient.CloseIdleConnections()
 }
@@ -98,6 +102,7 @@ func (s *Server) openStoreID(storeID, customerID string) (*auth.StoreIDComponent
 	return s.cipher.Open(storeID, customerID)
 }
 
+// RegisterRoutes attaches all public and internal API endpoints to the given mux, including store operations and replication handlers.
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// Public API (for components via UDS)
 	mux.HandleFunc("POST /api/v1/create", s.handleCreate)
@@ -1220,7 +1225,7 @@ func (s *Server) handleInternalSnapshot(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// RegistrySnapshotResponse is the response for registry snapshot requests.
+// RegistrySnapshotResponse is returned by the registry snapshot endpoint and contains all registry entries along with the current leader epoch for consistency checking during recovery.
 type RegistrySnapshotResponse struct {
 	Entries     []*registry.Entry `json:"entries"`
 	LeaderEpoch uint64            `json:"leader_epoch"`
@@ -1386,11 +1391,13 @@ func (s *Server) handleReplicateRegistry(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusOK)
 }
 
+// RegistryReserveRequest is the JSON body for reserving a name in the registry before store creation.
 type RegistryReserveRequest struct {
 	CustomerID string `json:"customer_id"`
 	Name       string `json:"name"`
 }
 
+// RegistryReserveResponse is returned after successfully reserving a name, providing the reservation ID needed to commit or abort the reservation.
 type RegistryReserveResponse struct {
 	ReservationID string `json:"reservation_id"`
 	LeaderEpoch   uint64 `json:"leader_epoch"`
@@ -1444,6 +1451,7 @@ func (s *Server) handleRegistryReserve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// RegistryCommitRequest is the JSON body for committing a name reservation and linking it to a store ID.
 type RegistryCommitRequest struct {
 	CustomerID    string    `json:"customer_id"`
 	Name          string    `json:"name"`
@@ -1452,6 +1460,7 @@ type RegistryCommitRequest struct {
 	ExpiresAt     time.Time `json:"expires_at"`
 }
 
+// RegistryCommitResponse is returned after successfully committing a name reservation.
 type RegistryCommitResponse struct {
 	StoreID     string `json:"store_id"`
 	LeaderEpoch uint64 `json:"leader_epoch"`
@@ -1509,6 +1518,7 @@ func (s *Server) handleRegistryCommit(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// RegistryAbortRequest is the JSON body for aborting a name reservation, releasing the name for future use.
 type RegistryAbortRequest struct {
 	CustomerID    string `json:"customer_id"`
 	Name          string `json:"name"`
@@ -1552,6 +1562,7 @@ func (s *Server) handleRegistryAbort(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// RegistryLookupResponse is returned when looking up a name in the registry, showing the associated store ID and current state.
 type RegistryLookupResponse struct {
 	StoreID       string `json:"store_id,omitempty"`
 	State         string `json:"state"`
@@ -1603,6 +1614,7 @@ func (s *Server) handleRegistryLookup(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// RegistryDeleteRequest is the JSON body for deleting a name from the registry.
 type RegistryDeleteRequest struct {
 	CustomerID string `json:"customer_id"`
 	Name       string `json:"name"`

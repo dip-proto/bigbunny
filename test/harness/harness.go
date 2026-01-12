@@ -17,35 +17,43 @@ import (
 	"github.com/dip-proto/bigbunny/internal/store"
 )
 
-// TestClock provides a controllable clock for deterministic tests.
+// TestClock provides a controllable clock for deterministic tests. It wraps a
+// single time value that can be advanced or set manually, letting you simulate
+// time passage without waiting for real time to elapse.
 type TestClock struct {
 	mu   sync.RWMutex
 	time time.Time
 }
 
+// NewTestClock creates a TestClock initialized to the given start time.
 func NewTestClock(start time.Time) *TestClock {
 	return &TestClock{time: start}
 }
 
+// Now returns the current time according to this clock.
 func (c *TestClock) Now() time.Time {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.time
 }
 
+// Advance moves the clock forward by the given duration.
 func (c *TestClock) Advance(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.time = c.time.Add(d)
 }
 
+// Set overwrites the clock's current time with the given value.
 func (c *TestClock) Set(t time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.time = t
 }
 
-// NetworkSim simulates network partitions and latency between nodes.
+// NetworkSim simulates network partitions and latency between nodes. You can
+// block traffic between specific source and destination pairs, or inject
+// artificial latency to test timeout and retry behavior.
 type NetworkSim struct {
 	mu        sync.RWMutex
 	blocked   map[string]bool // "src->dst" -> blocked
@@ -53,6 +61,7 @@ type NetworkSim struct {
 	transport http.RoundTripper
 }
 
+// NewNetworkSim creates a NetworkSim with no partitions or latency configured.
 func NewNetworkSim() *NetworkSim {
 	return &NetworkSim{
 		blocked:   make(map[string]bool),
@@ -120,13 +129,17 @@ func (n *NetworkSim) GetLatency(src, dst string) time.Duration {
 	return n.latency[n.key(src, dst)]
 }
 
-// NodeTransport creates an http.RoundTripper for a specific node that respects partitions.
+// NodeTransport is an http.RoundTripper that routes requests through the
+// NetworkSim. It checks for partitions and applies latency before forwarding
+// the request, making it possible to test how nodes behave under network failures.
 type NodeTransport struct {
 	nodeID  string
 	network *NetworkSim
 	nodes   map[string]*Node // address -> node for destination lookup
 }
 
+// RoundTrip implements http.RoundTripper by checking the NetworkSim for
+// partitions and latency before delegating to the default transport.
 func (t *NodeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Find destination node by address
 	destAddr := req.URL.Host
@@ -153,7 +166,10 @@ func (t *NodeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return http.DefaultTransport.RoundTrip(req)
 }
 
-// Node represents a single bbd node in the test cluster.
+// Node represents a single bbd node in the test cluster. It holds all the
+// components that make up a running node: the store manager, registry, replica
+// manager, API server, and HTTP server. The Clock field lets you simulate clock
+// skew for that specific node.
 type Node struct {
 	ID         string
 	Store      *store.Manager
@@ -168,16 +184,20 @@ type Node struct {
 	allNodes   map[string]*Node
 }
 
+// Addr returns the TCP address the node is listening on.
 func (n *Node) Addr() string {
 	return n.addr
 }
 
+// Start begins serving HTTP requests and starts the replica manager's
+// background goroutines.
 func (n *Node) Start() error {
 	n.Replica.Start()
 	go n.HTTPServer.Serve(n.listener)
 	return nil
 }
 
+// Stop gracefully shuts down the node, stopping replication and the HTTP server.
 func (n *Node) Stop() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -185,7 +205,9 @@ func (n *Node) Stop() error {
 	return n.HTTPServer.Shutdown(ctx)
 }
 
-// Cluster manages a test cluster of bbd nodes.
+// Cluster manages a test cluster of bbd nodes. It provides helpers for
+// starting and stopping the cluster, simulating network partitions, and
+// waiting for replication or role changes to complete.
 type Cluster struct {
 	nodes        map[string]*Node
 	clocks       map[string]*TestClock // per-node clocks
@@ -194,7 +216,9 @@ type Cluster struct {
 	mu           sync.RWMutex
 }
 
-// ClusterConfig holds configuration for creating a test cluster.
+// ClusterConfig holds configuration for creating a test cluster. The timing
+// values control heartbeat intervals, lease durations, and timeouts. Setting
+// UseTestClock to true enables per-node clock simulation for testing clock skew.
 type ClusterConfig struct {
 	NodeCount          int
 	HeartbeatInterval  time.Duration
@@ -207,6 +231,8 @@ type ClusterConfig struct {
 	InternalToken      string // shared secret for internal endpoint auth (empty = no auth)
 }
 
+// DefaultClusterConfig returns a ClusterConfig with sensible defaults for fast
+// tests: two nodes, short heartbeat intervals, and quick lease timeouts.
 func DefaultClusterConfig() *ClusterConfig {
 	return &ClusterConfig{
 		NodeCount:          2,
@@ -218,6 +244,9 @@ func DefaultClusterConfig() *ClusterConfig {
 	}
 }
 
+// NewCluster creates a new test cluster according to the given configuration.
+// It allocates TCP listeners on ephemeral ports, wires up the nodes with a
+// shared NetworkSim, and returns the cluster ready to be started.
 func NewCluster(cfg *ClusterConfig) (*Cluster, error) {
 	if cfg == nil {
 		cfg = DefaultClusterConfig()
@@ -351,6 +380,8 @@ func NewCluster(cfg *ClusterConfig) (*Cluster, error) {
 	}, nil
 }
 
+// Start brings up all nodes in the cluster. The node with the smallest ID
+// becomes the primary, while other nodes begin recovery to sync state.
 func (c *Cluster) Start() error {
 	// Determine primary (first node in sorted order)
 	primaryID := c.getPrimaryID()
@@ -370,6 +401,7 @@ func (c *Cluster) Start() error {
 	return nil
 }
 
+// Stop gracefully shuts down all nodes in the cluster.
 func (c *Cluster) Stop() error {
 	var lastErr error
 	for id, node := range c.nodes {
@@ -391,12 +423,14 @@ func (c *Cluster) getPrimaryID() string {
 	return first
 }
 
+// Node returns the node with the given ID, or nil if not found.
 func (c *Cluster) Node(id string) *Node {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.nodes[id]
 }
 
+// Nodes returns a copy of the node map, keyed by node ID.
 func (c *Cluster) Nodes() map[string]*Node {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -407,6 +441,7 @@ func (c *Cluster) Nodes() map[string]*Node {
 	return result
 }
 
+// Primary returns the node currently acting as primary, or nil if none.
 func (c *Cluster) Primary() *Node {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -418,6 +453,7 @@ func (c *Cluster) Primary() *Node {
 	return nil
 }
 
+// Secondary returns a node currently acting as secondary, or nil if none.
 func (c *Cluster) Secondary() *Node {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -429,6 +465,7 @@ func (c *Cluster) Secondary() *Node {
 	return nil
 }
 
+// Network returns the NetworkSim used to simulate partitions and latency.
 func (c *Cluster) Network() *NetworkSim {
 	return c.network
 }
@@ -473,12 +510,14 @@ func (c *Cluster) SyncClocks(t time.Time) {
 	}
 }
 
-// UseTestClock returns whether test clocks are enabled.
+// HasTestClocks returns true if per-node test clocks are enabled for this cluster.
 func (c *Cluster) HasTestClocks() bool {
 	return c.useTestClock
 }
 
-// WaitForRole waits for a node to reach the specified role.
+// WaitForRole polls until the given node reaches the specified role, or until
+// the timeout expires. It returns an error if the node is not found or the
+// timeout is exceeded.
 func (c *Cluster) WaitForRole(nodeID string, role replica.Role, timeout time.Duration) error {
 	node := c.Node(nodeID)
 	if node == nil {
@@ -496,7 +535,8 @@ func (c *Cluster) WaitForRole(nodeID string, role replica.Role, timeout time.Dur
 		nodeID, role, node.Replica.Role())
 }
 
-// WaitForCondition waits for a condition to be true.
+// WaitForCondition polls the given check function until it returns true, or
+// until the timeout expires. Use this instead of time.Sleep for more stable tests.
 func (c *Cluster) WaitForCondition(check func() bool, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -508,22 +548,23 @@ func (c *Cluster) WaitForCondition(check func() bool, timeout time.Duration) err
 	return fmt.Errorf("timeout waiting for condition")
 }
 
-// Partition creates a bidirectional partition between two nodes.
+// Partition blocks traffic in both directions between the two named nodes.
 func (c *Cluster) Partition(a, b string) {
 	c.network.BlockBidirectional(a, b)
 }
 
-// Heal removes a bidirectional partition between two nodes.
+// Heal restores traffic in both directions between the two named nodes.
 func (c *Cluster) Heal(a, b string) {
 	c.network.HealBidirectional(a, b)
 }
 
-// HealAll removes all partitions.
+// HealAll clears all partitions and latency settings from the network simulation.
 func (c *Cluster) HealAll() {
 	c.network.HealAll()
 }
 
-// WaitForStore waits for a store to appear on a node.
+// WaitForStore polls until the specified store exists on the given node, which
+// is useful for waiting for replication to complete after a write.
 func (c *Cluster) WaitForStore(nodeID, storeID, customerID string, timeout time.Duration) error {
 	node := c.Node(nodeID)
 	if node == nil {

@@ -7,14 +7,20 @@ import (
 	"time"
 )
 
+// EntryState represents the lifecycle state of a registry entry as it moves through
+// reservation, activation, and deletion phases.
 type EntryState int
 
 const (
-	StateCreating EntryState = iota // Reservation held, store not yet created
-	StateActive                     // Store created and linked
-	StateDeleting                   // Delete in progress
+	// StateCreating indicates a reservation is held but the store hasn't been created yet.
+	StateCreating EntryState = iota
+	// StateActive indicates the store has been created and is linked to this name.
+	StateActive
+	// StateDeleting indicates the entry is being deleted but the operation isn't complete.
+	StateDeleting
 )
 
+// String returns a human-readable representation of the entry state.
 func (s EntryState) String() string {
 	switch s {
 	case StateCreating:
@@ -28,6 +34,8 @@ func (s EntryState) String() string {
 	}
 }
 
+// Entry represents a named store registration in the registry. It maps a customer-scoped
+// name to a store ID, tracking the entry through its lifecycle from reservation to deletion.
 type Entry struct {
 	CustomerID    string
 	Name          string
@@ -40,14 +48,17 @@ type Entry struct {
 	Version       uint64
 }
 
+// Key returns the composite key used to index this entry in the registry.
 func (e *Entry) Key() string {
 	return MakeKey(e.CustomerID, e.Name)
 }
 
+// MakeKey builds the composite key for a customer and name pair.
 func MakeKey(customerID, name string) string {
 	return customerID + ":" + name
 }
 
+// Copy returns a deep copy of the entry to avoid pointer aliasing issues.
 func (e *Entry) Copy() *Entry {
 	return &Entry{
 		CustomerID:    e.CustomerID,
@@ -62,8 +73,10 @@ func (e *Entry) Copy() *Entry {
 	}
 }
 
+// ReservationTTL is how long a name reservation is held before it expires and can be reclaimed.
 const ReservationTTL = 5 * time.Second
 
+// IsReservationExpired returns true if this entry is a reservation that has timed out.
 func (e *Entry) IsReservationExpired() bool {
 	if e.State != StateCreating {
 		return false
@@ -71,17 +84,24 @@ func (e *Entry) IsReservationExpired() bool {
 	return time.Since(e.ReservedAt) > ReservationTTL
 }
 
+// Manager handles named store registrations with a two-phase reservation protocol.
+// It ensures name uniqueness within each customer's namespace and coordinates with
+// replication to maintain consistency across nodes.
 type Manager struct {
 	mu      sync.RWMutex
 	entries map[string]*Entry // key = customerID:name
 }
 
+// NewManager creates an empty registry manager ready to accept reservations.
 func NewManager() *Manager {
 	return &Manager{
 		entries: make(map[string]*Entry),
 	}
 }
 
+// Reserve attempts to claim a name for a customer. This is the first phase of the
+// two-phase creation protocol. The reservation is held for ReservationTTL, giving the
+// caller time to create the actual store before committing.
 func (m *Manager) Reserve(customerID, name string, leaderEpoch uint64) (*Entry, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -119,6 +139,8 @@ func (m *Manager) Reserve(customerID, name string, leaderEpoch uint64) (*Entry, 
 	return entry.Copy(), nil
 }
 
+// Commit finalizes a reservation by linking it to the newly created store. This is the
+// second phase of the two-phase protocol. The reservationID must match to prevent races.
 func (m *Manager) Commit(customerID, name, reservationID, storeID string, expiresAt time.Time, leaderEpoch uint64) (*Entry, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -150,6 +172,8 @@ func (m *Manager) Commit(customerID, name, reservationID, storeID string, expire
 	return entry.Copy(), nil
 }
 
+// Abort cancels a pending reservation, freeing the name for others. This is idempotent
+// and returns nil if the entry doesn't exist.
 func (m *Manager) Abort(customerID, name, reservationID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -176,6 +200,7 @@ func (m *Manager) Abort(customerID, name, reservationID string) error {
 	return nil
 }
 
+// Lookup retrieves a registry entry by customer and name. Returns a copy to avoid races.
 func (m *Manager) Lookup(customerID, name string) (*Entry, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -193,6 +218,8 @@ func (m *Manager) Lookup(customerID, name string) (*Entry, error) {
 	return entry.Copy(), nil
 }
 
+// LookupByStoreID finds an active entry by its store ID. This is useful for reverse lookups
+// when you have a store ID but need to find its registered name.
 func (m *Manager) LookupByStoreID(storeID string) (*Entry, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -205,6 +232,8 @@ func (m *Manager) LookupByStoreID(storeID string) (*Entry, error) {
 	return nil, ErrEntryNotFound
 }
 
+// MarkDeleting transitions an active entry to the deleting state. This prevents new
+// reservations for the name while the underlying store is being deleted.
 func (m *Manager) MarkDeleting(customerID, name string, leaderEpoch uint64) (*Entry, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -230,6 +259,8 @@ func (m *Manager) MarkDeleting(customerID, name string, leaderEpoch uint64) (*En
 	return entry.Copy(), nil
 }
 
+// Delete removes an entry from the registry entirely. This is idempotent and returns
+// nil if the entry doesn't exist.
 func (m *Manager) Delete(customerID, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -248,6 +279,8 @@ func (m *Manager) Delete(customerID, name string) error {
 	return nil
 }
 
+// RevertToActive moves a deleting entry back to active state. This is used when the
+// underlying store deletion fails and the entry needs to be recovered.
 func (m *Manager) RevertToActive(customerID, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -271,6 +304,8 @@ func (m *Manager) RevertToActive(customerID, name string) error {
 	return nil
 }
 
+// ApplyReplicatedEntry applies an entry received from replication. It uses version-based
+// conflict resolution, only applying updates with a higher version number.
 func (m *Manager) ApplyReplicatedEntry(e *Entry) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -289,6 +324,8 @@ func (m *Manager) ApplyReplicatedEntry(e *Entry) error {
 	return nil
 }
 
+// ApplyReplicatedDelete removes an entry as instructed by replication. Unlike Delete,
+// this doesn't check ownership since it's already been validated by the primary.
 func (m *Manager) ApplyReplicatedDelete(customerID, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -298,6 +335,7 @@ func (m *Manager) ApplyReplicatedDelete(customerID, name string) error {
 	return nil
 }
 
+// GetExpiredReservations returns all reservations that have timed out and can be cleaned up.
 func (m *Manager) GetExpiredReservations() []*Entry {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -311,6 +349,7 @@ func (m *Manager) GetExpiredReservations() []*Entry {
 	return expired
 }
 
+// GetDeletingEntries returns all entries currently in the deleting state.
 func (m *Manager) GetDeletingEntries() []*Entry {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -324,12 +363,14 @@ func (m *Manager) GetDeletingEntries() []*Entry {
 	return deleting
 }
 
+// Count returns the total number of entries in the registry across all states.
 func (m *Manager) Count() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.entries)
 }
 
+// CountByState returns entry counts grouped by their lifecycle state.
 func (m *Manager) CountByState() map[EntryState]int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

@@ -8,20 +8,27 @@ import (
 	"time"
 )
 
+// ReplicaRole indicates whether a node acts as primary or secondary for a given store.
 type ReplicaRole int
 
 const (
+	// RolePrimary indicates this node owns writes and replicates to the secondary.
 	RolePrimary ReplicaRole = iota
+	// RoleSecondary indicates this node receives replicated data from the primary.
 	RoleSecondary
 )
 
+// DataType distinguishes between blob stores and atomic counters.
 type DataType uint8
 
 const (
+	// DataTypeBlob is used for binary data stores holding session data or arbitrary content.
 	DataTypeBlob DataType = iota
+	// DataTypeCounter is used for atomic integer counters with optional bounds.
 	DataTypeCounter
 )
 
+// String returns a human-readable representation of the data type.
 func (d DataType) String() string {
 	switch d {
 	case DataTypeBlob:
@@ -33,6 +40,7 @@ func (d DataType) String() string {
 	}
 }
 
+// String returns a human-readable representation of the replica role.
 func (r ReplicaRole) String() string {
 	switch r {
 	case RolePrimary:
@@ -51,6 +59,7 @@ type LockState struct {
 	Timeout   time.Duration
 }
 
+// IsExpired reports whether the lock has exceeded its timeout duration.
 func (l *LockState) IsExpired() bool {
 	if l == nil || l.LockID == "" {
 		return true
@@ -75,6 +84,7 @@ type Store struct {
 	CreatedAt        time.Time
 }
 
+// IsExpired reports whether the store's TTL has elapsed.
 func (s *Store) IsExpired() bool {
 	return !s.ExpiresAt.IsZero() && time.Now().After(s.ExpiresAt)
 }
@@ -138,12 +148,14 @@ func NewManagerWithLimit(memoryLimit int64) *Manager {
 	}
 }
 
+// SetMemoryLimit changes the global memory limit for all stores combined.
 func (m *Manager) SetMemoryLimit(limit int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.memoryLimit = limit
 }
 
+// SetCustomerMemoryQuota sets the per-customer memory limit applied uniformly to all customers.
 func (m *Manager) SetCustomerMemoryQuota(quota int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -154,6 +166,7 @@ func storeSize(s *Store) int64 {
 	return int64(len(s.Body)) + storeOverhead
 }
 
+// Create adds a new store to the manager, enforcing memory limits and customer quotas.
 func (m *Manager) Create(s *Store) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -191,6 +204,7 @@ func (m *Manager) Create(s *Store) error {
 	return nil
 }
 
+// Get retrieves a store by ID, verifying the customer owns it and it has not expired.
 func (m *Manager) Get(storeID, customerID string) (*Store, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -209,6 +223,7 @@ func (m *Manager) Get(storeID, customerID string) (*Store, error) {
 	return s.Copy(), nil
 }
 
+// Update replaces the store contents, incrementing its version and adjusting memory tracking.
 func (m *Manager) Update(s *Store) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -349,6 +364,7 @@ func (m *Manager) CreateIfNotExists(s *Store) error {
 	return nil
 }
 
+// Delete removes a store after verifying customer ownership.
 func (m *Manager) Delete(storeID, customerID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -404,6 +420,7 @@ func (m *Manager) AcquireLock(storeID, customerID, lockID string, timeout time.D
 	return s.Copy(), nil
 }
 
+// ReleaseLock clears a lock held by the caller without modifying the store contents.
 func (m *Manager) ReleaseLock(storeID, customerID, lockID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -423,6 +440,7 @@ func (m *Manager) ReleaseLock(storeID, customerID, lockID string) error {
 	return nil
 }
 
+// SetLock applies a replicated lock state to a store, used by the secondary during replication.
 func (m *Manager) SetLock(storeID, lockID string, heldSince time.Time, timeout time.Duration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -444,6 +462,7 @@ func (m *Manager) SetLock(storeID, lockID string, heldSince time.Time, timeout t
 	return nil
 }
 
+// ClearLock removes a replicated lock release, used by the secondary during replication.
 func (m *Manager) ClearLock(storeID, lockID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -459,6 +478,7 @@ func (m *Manager) ClearLock(storeID, lockID string) error {
 	return nil
 }
 
+// ClearLockUnconditionally removes any lock on a store regardless of the lock ID.
 func (m *Manager) ClearLockUnconditionally(storeID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -520,6 +540,7 @@ func (m *Manager) CompleteLock(storeID, customerID, lockID string, newBody []byt
 	return s.Copy(), nil
 }
 
+// Copy returns a deep copy of the store to avoid races with concurrent modifications.
 func (s *Store) Copy() *Store {
 	cpy := &Store{
 		ID:               s.ID,
@@ -545,24 +566,28 @@ func (s *Store) Copy() *Store {
 	return cpy
 }
 
+// Count returns the total number of stores currently held by the manager.
 func (m *Manager) Count() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.stores)
 }
 
+// MemoryUsage returns the current estimated memory usage in bytes.
 func (m *Manager) MemoryUsage() int64 {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.usedBytes
 }
 
+// MemoryLimit returns the configured global memory limit, or zero if unlimited.
 func (m *Manager) MemoryLimit() int64 {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.memoryLimit
 }
 
+// GetOrphanedStores finds stores with a pending name reservation that are older than maxAge.
 func (m *Manager) GetOrphanedStores(maxAge time.Duration) []*Store {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -577,6 +602,7 @@ func (m *Manager) GetOrphanedStores(maxAge time.Duration) []*Store {
 	return orphans
 }
 
+// ClearPendingName removes the pending name reservation from a store after commit or abort.
 func (m *Manager) ClearPendingName(storeID, customerID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -593,6 +619,7 @@ func (m *Manager) ClearPendingName(storeID, customerID string) error {
 	return nil
 }
 
+// GetExpiredStores returns all stores whose TTL has elapsed, for garbage collection.
 func (m *Manager) GetExpiredStores() []*Store {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -606,6 +633,7 @@ func (m *Manager) GetExpiredStores() []*Store {
 	return expired
 }
 
+// ForceDelete removes a store without checking customer ownership, used for replication and GC.
 func (m *Manager) ForceDelete(storeID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

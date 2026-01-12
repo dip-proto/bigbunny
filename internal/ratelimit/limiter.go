@@ -5,6 +5,10 @@ import (
 	"time"
 )
 
+// Limiter implements a per-customer token bucket rate limiter. It maintains
+// separate buckets for each customer ID and refills tokens at a constant rate
+// up to a configurable burst capacity. Inactive buckets are periodically
+// cleaned up to prevent memory leaks.
 type Limiter struct {
 	mu          sync.RWMutex
 	buckets     map[string]*tokenBucket
@@ -20,6 +24,8 @@ type tokenBucket struct {
 	lastCheck time.Time
 }
 
+// Clock provides the current time. This abstraction exists so tests can
+// control time progression without waiting for real time to pass.
 type Clock interface {
 	Now() time.Time
 }
@@ -28,10 +34,15 @@ type realClock struct{}
 
 func (realClock) Now() time.Time { return time.Now() }
 
+// NewLimiter creates a rate limiter that allows the given number of requests
+// per second with a burst capacity for handling traffic spikes. It starts a
+// background goroutine for cleanup, so you should call Stop when done.
 func NewLimiter(rate, burst int) *Limiter {
 	return NewLimiterWithClock(rate, burst, realClock{})
 }
 
+// NewLimiterWithClock is like NewLimiter but accepts a custom clock, which is
+// handy for testing time-dependent behavior without sleeps.
 func NewLimiterWithClock(rate, burst int, clock Clock) *Limiter {
 	l := &Limiter{
 		buckets:     make(map[string]*tokenBucket),
@@ -44,6 +55,8 @@ func NewLimiterWithClock(rate, burst int, clock Clock) *Limiter {
 	return l
 }
 
+// Allow checks whether the customer has tokens available and consumes one if
+// so. Returns true if the request should proceed, false if rate limited.
 func (l *Limiter) Allow(customerID string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -113,11 +126,15 @@ func (l *Limiter) cleanup() {
 	}
 }
 
+// Stop shuts down the background cleanup goroutine and waits for it to finish.
+// Call this when you are done with the limiter to avoid leaking goroutines.
 func (l *Limiter) Stop() {
 	close(l.stopCleanup)
 	l.cleanupWg.Wait()
 }
 
+// Stats returns the number of customer buckets currently tracked. Useful for
+// monitoring memory usage and verifying that cleanup is working properly.
 func (l *Limiter) Stats() int {
 	l.mu.RLock()
 	defer l.mu.RUnlock()

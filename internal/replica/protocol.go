@@ -6,6 +6,7 @@ import (
 	"github.com/dip-proto/bigbunny/internal/store"
 )
 
+// MessageType identifies the kind of replication message being sent between nodes in the cluster.
 type MessageType int
 
 const (
@@ -57,6 +58,7 @@ func (m MessageType) String() string {
 	}
 }
 
+// ReplicationMessage carries store data changes from the primary to secondaries, including creates, updates, deletes, and lock state changes.
 type ReplicationMessage struct {
 	Type        MessageType   `json:"type"`
 	StoreID     string        `json:"store_id,omitempty"`
@@ -75,6 +77,7 @@ type ReplicationMessage struct {
 	Timestamp   time.Time     `json:"timestamp,omitempty"`
 }
 
+// HeartbeatMessage is sent periodically by the primary to all secondaries to maintain its lease and share cluster state.
 type HeartbeatMessage struct {
 	HostID      string    `json:"host_id"`
 	Address     string    `json:"address"` // TCP address of sender (for request forwarding)
@@ -84,6 +87,7 @@ type HeartbeatMessage struct {
 	Timestamp   time.Time `json:"timestamp"`
 }
 
+// HeartbeatAck is the response a secondary sends back after receiving a heartbeat, letting the primary know the secondary is alive.
 type HeartbeatAck struct {
 	HostID         string    `json:"host_id"`
 	LeaderEpoch    uint64    `json:"leader_epoch"`
@@ -91,16 +95,19 @@ type HeartbeatAck struct {
 	Timestamp      time.Time `json:"timestamp"`
 }
 
+// SnapshotRequest is sent by a joining node to request the current state from the primary during recovery.
 type SnapshotRequest struct {
 	HostID       string `json:"host_id"`
 	SinceVersion uint64 `json:"since_version"` // 0 = full snapshot
 }
 
+// TombstoneEntry records a deleted store and when it was deleted, used to prevent resurrection of recently deleted stores.
 type TombstoneEntry struct {
 	StoreID   string    `json:"store_id"`
 	DeletedAt time.Time `json:"deleted_at"`
 }
 
+// SnapshotData contains a complete point-in-time copy of all stores and tombstones that a joining node uses to bootstrap its state.
 type SnapshotData struct {
 	HostID      string           `json:"host_id"`
 	Stores      []*store.Store   `json:"stores"`
@@ -109,6 +116,7 @@ type SnapshotData struct {
 	Complete    bool             `json:"complete"`
 }
 
+// RegistryReplicationMessage carries named store registry changes from the primary to secondaries, including reservations, commits, aborts, and deletes.
 type RegistryReplicationMessage struct {
 	Type          MessageType `json:"type"`
 	CustomerID    string      `json:"customer_id"`

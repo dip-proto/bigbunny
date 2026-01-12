@@ -10,6 +10,7 @@ import (
 	"github.com/dip-proto/bigbunny/internal/store"
 )
 
+// ErrorCode represents a machine-readable error identifier returned in the BigBunny-Error-Code header.
 type ErrorCode string
 
 const (
@@ -79,6 +80,7 @@ func writeHTTPError(w http.ResponseWriter, err error, fallbackMsg string) bool {
 	return false
 }
 
+// HTTP header names used in API responses.
 const (
 	HeaderErrorCode  = "BigBunny-Error-Code"
 	HeaderWarning    = "BigBunny-Warning"
@@ -86,6 +88,7 @@ const (
 	HeaderLockState  = "BigBunny-Lock-State"
 )
 
+// Warning codes returned in the BigBunny-Warning header.
 const (
 	WarningDegradedWrite = "DegradedWrite"
 )

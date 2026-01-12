@@ -14,19 +14,37 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
-const (
-	StoreIDVersion = "v1"
-	AADPrefix      = "storeid:v1:"
-	KeyInfoPrefix  = "storeid:v1:enc:"
-	KeySize        = 32
-)
+// StoreIDVersion is the current version prefix for encrypted store IDs.
+const StoreIDVersion = "v1"
+
+// AADPrefix is the additional authenticated data prefix used during encryption
+// to bind store IDs to their version and customer context.
+const AADPrefix = "storeid:v1:"
+
+// KeyInfoPrefix is the HKDF info string prefix used when deriving per-customer
+// encryption keys from the master key.
+const KeyInfoPrefix = "storeid:v1:enc:"
+
+// KeySize is the required length in bytes for master encryption keys.
+const KeySize = 32
+
+// ErrInvalidStoreID indicates the store ID could not be parsed or decrypted,
+// either due to malformed format, wrong customer, or tampering.
+var ErrInvalidStoreID = errors.New("invalid store ID")
+
+// ErrUnknownKeyID is returned when attempting to decrypt with a key ID
+// that is not present in the current key set.
+var ErrUnknownKeyID = errors.New("unknown key ID")
+
+// ErrDecryptionError indicates the ciphertext failed authentication,
+// typically meaning the data was corrupted or the wrong key was used.
+var ErrDecryptionError = errors.New("decryption failed")
+
+// ErrInvalidKey is returned when a provided encryption key has the wrong size
+// or is otherwise unsuitable for use.
+var ErrInvalidKey = errors.New("invalid key")
 
 var (
-	ErrInvalidStoreID  = errors.New("invalid store ID")
-	ErrUnknownKeyID    = errors.New("unknown key ID")
-	ErrDecryptionError = errors.New("decryption failed")
-	ErrInvalidKey      = errors.New("invalid key")
-
 	sitePattern     = regexp.MustCompile(`^[a-z0-9-]{1,16}$`)
 	shardIDPattern  = regexp.MustCompile(`^[A-Za-z0-9_-]{11}$`)
 	uniqueIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{16}$`)
@@ -168,6 +186,8 @@ func (ks *KeySet) deriveKey(keyID string, customerID string) ([]byte, error) {
 	return key, nil
 }
 
+// CurrentKeyID returns the key ID that will be used for new encryptions.
+// Decryption can still use any key in the set, but this is the active one.
 func (ks *KeySet) CurrentKeyID() string {
 	return ks.currentID
 }
@@ -176,6 +196,9 @@ type cipherImpl struct {
 	keySet *KeySet
 }
 
+// NewCipher creates a StoreIDCipher that uses the provided key set for
+// encrypting and decrypting store IDs. The cipher handles per-customer
+// key derivation internally.
 func NewCipher(ks *KeySet) StoreIDCipher {
 	return &cipherImpl{keySet: ks}
 }

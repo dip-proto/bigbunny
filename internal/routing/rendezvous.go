@@ -111,10 +111,12 @@ func (r *RendezvousHasher) hash(shardID, hostID string) uint64 {
 	return binary.BigEndian.Uint64(sum[:8])
 }
 
+// GetAllHosts returns all hosts known to the hasher, regardless of health status.
 func (r *RendezvousHasher) GetAllHosts() []*Host {
 	return r.hosts
 }
 
+// GetHealthyHosts returns only the hosts currently marked as healthy.
 func (r *RendezvousHasher) GetHealthyHosts() []*Host {
 	var healthy []*Host
 	for _, h := range r.hosts {
