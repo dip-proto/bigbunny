@@ -17,7 +17,7 @@ The basic operations are creating, reading, updating, and deleting stores. Let's
 The simplest operation is creating a store. You give Big Bunny some data, and it gives you back an encrypted store ID that you'll use to reference that store later.
 
 ```bash
-./bbd create --data "session data"
+./bbd create -data "session data"
 ```
 
 You get back something like `v1:0:8ahePLwi-iJB-h_8AbZYvK4jK9...`. That's your store ID. Save it somewhere—you'll need it to read, update, or delete this store.
@@ -32,7 +32,7 @@ cat myfile.json | ./bbd create
 By default, stores expire after 14 days. If you need a different lifetime, specify it with `--ttl`:
 
 ```bash
-./bbd create --data "one hour session" --ttl 3600
+./bbd create -data "one hour session" -ttl 3600
 ```
 
 The TTL is in seconds. An hour is 3600 seconds, a day is 86400, a week is 604800. When the TTL expires, the store gets garbage collected automatically.
@@ -40,7 +40,7 @@ The TTL is in seconds. An hour is 3600 seconds, a day is 86400, a week is 604800
 If you're working with a specific customer (not just the default), set that too:
 
 ```bash
-./bbd create --customer=acme-corp --data "isolated data"
+./bbd create -customer=acme-corp -data "isolated data"
 ```
 
 ### Reading Stores
@@ -56,7 +56,7 @@ This prints the store contents to stdout. It's fast because everything is in mem
 If you want to see how much time the store has left before expiring, add `--ttl`:
 
 ```bash
-./bbd get v1:0:8ahePLwi... --ttl
+./bbd get v1:0:8ahePLwi... -ttl
 ```
 
 This shows both the contents and the remaining TTL in seconds.
@@ -119,7 +119,7 @@ NEW_VALUE=$((CURRENT + 1))
 Once you've computed the new value, complete the modification:
 
 ```bash
-./bbd complete-modify --lock "$LOCK" --data "$NEW_VALUE" v1:0:8ahePLwi...
+./bbd complete-modify -lock "$LOCK" -data "$NEW_VALUE" v1:0:8ahePLwi...
 ```
 
 The lock gets released, the store gets updated, and the change replicates to the secondary.
@@ -127,7 +127,7 @@ The lock gets released, the store gets updated, and the change replicates to the
 If something goes wrong and you want to abort without making changes, use cancel instead:
 
 ```bash
-./bbd cancel-modify v1:0:8ahePLwi... --lock "$LOCK"
+./bbd cancel-modify v1:0:8ahePLwi... -lock "$LOCK"
 ```
 
 This releases the lock without modifying anything. The store stays exactly as it was.
@@ -141,7 +141,7 @@ Sometimes you want to refer to a store by a name instead of tracking an opaque e
 Create a store with a name attached:
 
 ```bash
-./bbd create-named --data '{"items": []}' shopping-cart
+./bbd create-named -data '{"items": []}' shopping-cart
 ```
 
 You still get back a store ID, but now there's also a name mapping. The name is scoped to your customer ID, so different customers can use the same name without conflict.
@@ -149,7 +149,7 @@ You still get back a store ID, but now there's also a name mapping. The name is 
 If you try to create a named store that already exists, you'll get an error. But sometimes you want "get or create" semantics—use the existing store if it exists, create it if it doesn't. Add `--reuse` for that:
 
 ```bash
-./bbd create-named --reuse --data '{"default": true}' shopping-cart
+./bbd create-named -reuse -data '{"default": true}' shopping-cart
 ```
 
 If `shopping-cart` already exists, you get back its store ID. If not, a new store gets created with your data.
@@ -319,7 +319,7 @@ This shows you the node's role (primary, secondary, or joining), how many stores
 For machine-readable output, add `--json`:
 
 ```bash
-./bbd status --json | jq .
+./bbd status -json | jq .
 ```
 
 The JSON includes all the same information in structured form, which is useful for monitoring systems.
@@ -413,20 +413,20 @@ Implement a per-user rate limiter that allows 100 requests per minute:
 
 ```bash
 USER_ID="user123"
-COUNTER=$(./bbd create-named --data "0" --ttl 60 --reuse "${USER_ID}-rate-limit")
+COUNTER=$(./bbd create-named -data "0" -ttl 60 -reuse "${USER_ID}-rate-limit")
 
 # On each request, increment the counter
 LOCK=$(./bbd begin-modify $COUNTER)
 COUNT=$(./bbd get $COUNTER)
 
 if [ "$COUNT" -ge 100 ]; then
-  ./bbd cancel-modify $COUNTER --lock "$LOCK"
+  ./bbd cancel-modify $COUNTER -lock "$LOCK"
   echo "Rate limit exceeded"
   exit 1
 fi
 
 NEW_COUNT=$((COUNT + 1))
-./bbd complete-modify --lock "$LOCK" --data "$NEW_COUNT" $COUNTER
+./bbd complete-modify -lock "$LOCK" -data "$NEW_COUNT" $COUNTER
 ```
 
 The counter expires after 60 seconds (the TTL), which resets the limit automatically.
@@ -437,14 +437,14 @@ Maintain a shopping cart that persists across requests:
 
 ```bash
 USER_ID="user456"
-CART_ID=$(./bbd create-named --data '{"items":[]}' --ttl 86400 --reuse "${USER_ID}-cart")
+CART_ID=$(./bbd create-named -data '{"items":[]}' -ttl 86400 -reuse "${USER_ID}-cart")
 
 # Add an item (this would be JSON manipulation in a real app)
 LOCK=$(./bbd begin-modify $CART_ID)
 CURRENT=$(./bbd get $CART_ID)
 # ... parse JSON, add item, serialize ...
 NEW_CART='{"items":["item1","item2"]}'
-./bbd complete-modify --lock "$LOCK" --data "$NEW_CART" $CART_ID
+./bbd complete-modify -lock "$LOCK" -data "$NEW_CART" $CART_ID
 ```
 
 The cart expires after 24 hours (86400 seconds), which is reasonable for shopping sessions.
@@ -457,7 +457,7 @@ Store user session state:
 SESSION_ID=$(uuidgen)
 SESSION_DATA='{"user_id":"123","logged_in":true,"preferences":{}}'
 
-STORE_ID=$(./bbd create --data "$SESSION_DATA" --ttl 3600)
+STORE_ID=$(./bbd create -data "$SESSION_DATA" -ttl 3600)
 
 # Put the store ID in a cookie so subsequent requests can access it
 echo "Set-Cookie: session=$STORE_ID; Max-Age=3600; HttpOnly; Secure"
@@ -508,7 +508,7 @@ These commands are for operators, not for normal application use.
 Manually promote a secondary to primary:
 
 ```bash
-./bbd promote --uds=/var/run/bbd/bbd.sock
+./bbd promote -uds=/var/run/bbd/bbd.sock
 ```
 
 This immediately increments the epoch and makes the node primary. Use this only during emergency failover when you know the old primary is dead. If you use it carelessly, you can cause split-brain.
@@ -518,7 +518,7 @@ This immediately increments the epoch and makes the node primary. Use this only 
 Force-release a lock without normal checks:
 
 ```bash
-./bbd release-lock <store-id> --uds=/var/run/bbd/bbd.sock
+./bbd release-lock <store-id> -uds=/var/run/bbd/bbd.sock
 ```
 
 This clears the lock unconditionally, bypassing customer verification and lock ID checks. Only use this when a lock is genuinely stuck due to a bug. If you use it while a legitimate client holds the lock, you'll break that client's modify operation.

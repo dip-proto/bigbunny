@@ -174,7 +174,7 @@ Now you can restart the primary. Clients will see a brief period of unavailabili
 If you're more careful, you can force a promotion before restarting the primary. On the secondary node, run:
 
 ```bash
-./bbd promote --uds=/var/run/bbd/bbd.sock
+./bbd promote -uds=/var/run/bbd/bbd.sock
 ```
 
 This immediately promotes the secondary to primary. Now you can restart the old primary without any client-visible downtime, because requests are already going to the new primary.
@@ -246,7 +246,7 @@ If all operations on a store fail with `StoreLocked` and it's been more than 500
 The lock should automatically expire after 500 milliseconds. If it doesn't, that's a bug. As a workaround, you can force-release the lock:
 
 ```bash
-./bbd release-lock <store-id> --uds=/var/run/bbd/bbd.sock
+./bbd release-lock <store-id> -uds=/var/run/bbd/bbd.sock
 ```
 
 This bypasses the normal lock checking and clears the lock unconditionally. Only use this when you're sure the lock is genuinely stuck and not legitimately held.
@@ -262,7 +262,7 @@ If it's been longer than four seconds and there's still no promotion, check the 
 As a last resort, you can force promotion:
 
 ```bash
-./bbd promote --uds=/var/run/bbd/bbd.sock
+./bbd promote -uds=/var/run/bbd/bbd.sock
 ```
 
 This immediately promotes the node, bypassing the lease checks. Use this only in emergencies when you're sure the old primary is really dead.

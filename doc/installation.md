@@ -356,7 +356,7 @@ A better approach is to run your client processes as the same user that runs Big
 After starting Big Bunny, verify that it's working by checking its status:
 
 ```bash
-./bbd status --uds=/tmp/bbd.sock
+./bbd status -uds=/tmp/bbd.sock
 ```
 
 You should see output showing the node ID, role (primary if solo, or primary/secondary in a cluster), epoch number, number of stores (probably zero initially), and memory usage.

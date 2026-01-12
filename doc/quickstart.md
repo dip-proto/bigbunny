@@ -19,7 +19,7 @@ Keep this terminal open. Big Bunny is now running and ready to accept requests. 
 Let's create a simple session store using the command-line interface. The `create` command takes your data and gives you back an encrypted store identifier.
 
 ```bash
-./bbd create --data "Hello, Big Bunny!"
+./bbd create -data "Hello, Big Bunny!"
 ```
 
 You'll get back something that looks like `v1:0:8ahePLwi-iJB-h_8AbZYvK4jK9...`. This is your store ID. It's encrypted, which means you can't see what's inside it, and that's intentional. The encryption prevents you from tampering with routing information or accessing stores that belong to other customers.
@@ -51,7 +51,7 @@ The system gives you back a lock token and shows you the current contents. The l
 Now you can compute your new value based on what you read. In a real application, you might increment a counter, add an item to a shopping cart, or update session state. For this example, let's just replace the contents with something new.
 
 ```bash
-./bbd complete-modify --lock "$LOCK" --data "Updated content!" v1:0:8ahePLwi-iJB-h_8AbZYvK4jK9...
+./bbd complete-modify -lock "$LOCK" -data "Updated content!" v1:0:8ahePLwi-iJB-h_8AbZYvK4jK9...
 ```
 
 The store is now updated, and the lock is released. If something went wrong and you wanted to abort instead, you'd use `cancel-modify` with the same lock token.
@@ -74,7 +74,7 @@ This is perfect for cases where you're just replacing the entire store contents 
 Sometimes you want to refer to a store by a memorable name instead of tracking an opaque encrypted identifier. That's what named stores are for. Let's create one for a shopping cart.
 
 ```bash
-./bbd create-named --data '{"items": []}' shopping-cart
+./bbd create-named -data '{"items": []}' shopping-cart
 ```
 
 You still get back a store ID, but now you can look it up later by name.
@@ -143,13 +143,13 @@ Let's put it all together with a realistic example. Imagine you're implementing 
 
 ```bash
 # Create a counter for a user
-COUNTER=$(./bbd create --data "0")
+COUNTER=$(./bbd create -data "0")
 
 # Later, when a request comes in, increment it
 LOCK=$(./bbd begin-modify $COUNTER)
 CURRENT=$(./bbd get $COUNTER)
 NEW_VALUE=$((CURRENT + 1))
-./bbd complete-modify --lock "$LOCK" --data "$NEW_VALUE" $COUNTER
+./bbd complete-modify -lock "$LOCK" -data "$NEW_VALUE" $COUNTER
 ```
 
 The lock ensures that even if two requests try to increment the counter simultaneously, they won't step on each other. One will acquire the lock, increment the counter, and release it. The other will wait for the lock, then increment the already-updated value.
@@ -175,19 +175,19 @@ In the second new terminal, start node2 as the secondary.
 The node with the lexicographically smaller ID (node1) becomes the primary. Now create a store through node1.
 
 ```bash
-./bbd create --uds=/tmp/bbd1.sock --data "replicated data"
+./bbd create -uds=/tmp/bbd1.sock -data "replicated data"
 ```
 
 Check node2's status to confirm it received the replication.
 
 ```bash
-./bbd status --uds=/tmp/bbd2.sock
+./bbd status -uds=/tmp/bbd2.sock
 ```
 
 You should see one store. Now kill node1 (Ctrl+C in its terminal) and watch node2 promote itself. After about four seconds, check node2's status again.
 
 ```bash
-./bbd status --uds=/tmp/bbd2.sock
+./bbd status -uds=/tmp/bbd2.sock
 ```
 
 The role should have changed from secondary to primary. Your store is still there, and requests that previously went to node1 can now be routed to node2. That's automatic failover. No manual intervention required, no data loss as long as replication finished before node1 died.
