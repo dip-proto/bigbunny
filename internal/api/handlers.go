@@ -1615,7 +1615,7 @@ func (s *Server) handleRegistryDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *Server) handleIncrement(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleCounterDelta(w http.ResponseWriter, r *http.Request, negate bool, opName string) {
 	now := time.Now()
 
 	if !s.requirePrimary(w, r) {
@@ -1633,13 +1633,11 @@ func (s *Server) handleIncrement(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate store ID belongs to customer
 	_, ok = s.parseStoreIDWithShard(w, storeID, customerID)
 	if !ok {
 		return
 	}
 
-	// Parse increment request
 	body, ok := s.readLimitedBody(w, r)
 	if !ok {
 		return
@@ -1651,17 +1649,19 @@ func (s *Server) handleIncrement(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse optional TTL header
 	newExpiresAt := s.parseExpiresAtHeader(r, now)
 
-	// Perform atomic increment
-	result, err := s.store.Increment(storeID, customerID, req.Delta, s.replica.LeaderEpoch(), newExpiresAt)
+	delta := req.Delta
+	if negate {
+		delta = -delta
+	}
+
+	result, err := s.store.Increment(storeID, customerID, delta, s.replica.LeaderEpoch(), newExpiresAt)
 	if err != nil {
-		writeHTTPError(w, err, "failed to increment counter")
+		writeHTTPError(w, err, "failed to "+opName+" counter")
 		return
 	}
 
-	// Queue replication of updated counter state (result contains all needed fields)
 	s.replica.QueueReplication(&replica.ReplicationMessage{
 		Type:       replica.MsgUpdateStore,
 		StoreID:    storeID,
@@ -1673,7 +1673,6 @@ func (s *Server) handleIncrement(w http.ResponseWriter, r *http.Request) {
 		Version:    result.Version,
 	})
 
-	// Return counter result (result contains all needed fields)
 	resp := CounterResponse{
 		Value:   result.Value,
 		Version: result.Version,
@@ -1690,77 +1689,10 @@ func (s *Server) handleIncrement(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleIncrement(w http.ResponseWriter, r *http.Request) {
+	s.handleCounterDelta(w, r, false, "increment")
+}
+
 func (s *Server) handleDecrement(w http.ResponseWriter, r *http.Request) {
-	now := time.Now()
-
-	if !s.requirePrimary(w, r) {
-		return
-	}
-
-	customerID, ok := s.requireCustomerID(w, r)
-	if !ok {
-		return
-	}
-
-	storeID := strings.TrimSpace(r.PathValue("storeID"))
-	if storeID == "" {
-		http.Error(w, "missing store ID", http.StatusBadRequest)
-		return
-	}
-
-	// Validate store ID belongs to customer
-	_, ok = s.parseStoreIDWithShard(w, storeID, customerID)
-	if !ok {
-		return
-	}
-
-	// Parse decrement request
-	body, ok := s.readLimitedBody(w, r)
-	if !ok {
-		return
-	}
-
-	var req IncrementRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		http.Error(w, "invalid JSON request", http.StatusBadRequest)
-		return
-	}
-
-	// Parse optional TTL header
-	newExpiresAt := s.parseExpiresAtHeader(r, now)
-
-	// Decrement is just increment with negative delta
-	result, err := s.store.Increment(storeID, customerID, -req.Delta, s.replica.LeaderEpoch(), newExpiresAt)
-	if err != nil {
-		writeHTTPError(w, err, "failed to decrement counter")
-		return
-	}
-
-	// Queue replication of updated counter state (result contains all needed fields)
-	s.replica.QueueReplication(&replica.ReplicationMessage{
-		Type:       replica.MsgUpdateStore,
-		StoreID:    storeID,
-		ShardID:    result.ShardID,
-		CustomerID: customerID,
-		DataType:   uint8(store.DataTypeCounter),
-		Body:       result.Body,
-		ExpiresAt:  result.ExpiresAt,
-		Version:    result.Version,
-	})
-
-	// Return counter result (result contains all needed fields)
-	resp := CounterResponse{
-		Value:   result.Value,
-		Version: result.Version,
-		Bounded: result.Bounded,
-		Min:     result.Min,
-		Max:     result.Max,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	s.checkDegradedWrite(w)
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("error writing response body: %v", err)
-	}
+	s.handleCounterDelta(w, r, true, "decrement")
 }

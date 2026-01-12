@@ -795,7 +795,6 @@ func runCreateCommand(args []string) {
 	printWarning(resp)
 }
 
-
 func runGetCommand(args []string) {
 	fs := flag.NewFlagSet("get", flag.ExitOnError)
 	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
