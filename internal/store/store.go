@@ -95,9 +95,9 @@ type CounterResult struct {
 	Min     *int64 // Minimum bound (nil if unbounded)
 	Max     *int64 // Maximum bound (nil if unbounded)
 	// Fields needed for replication
-	ShardID    string
-	ExpiresAt  time.Time
-	Body       []byte // Serialized counter data
+	ShardID     string
+	ExpiresAt   time.Time
+	Body        []byte // Serialized counter data
 	LeaderEpoch uint64
 }
 

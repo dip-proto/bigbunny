@@ -64,6 +64,21 @@ func main() {
 		case "cancel-modify":
 			runCancelModifyCommand(os.Args[2:])
 			return
+		case "counter-create":
+			runCounterCreateCommand(os.Args[2:])
+			return
+		case "counter-get":
+			runCounterGetCommand(os.Args[2:])
+			return
+		case "counter-increment":
+			runCounterIncrementCommand(os.Args[2:])
+			return
+		case "counter-decrement":
+			runCounterDecrementCommand(os.Args[2:])
+			return
+		case "counter-set":
+			runCounterSetCommand(os.Args[2:])
+			return
 		case "help", "-h", "--help":
 			printUsage()
 			return
@@ -423,6 +438,13 @@ Modify commands:
   bbd complete-modify [options] <store-id> Complete modify with new data
   bbd cancel-modify [options] <store-id>   Cancel modify operation
 
+Counter commands:
+  bbd counter-create [options]             Create a counter store
+  bbd counter-get [options] <store-id>     Get counter value
+  bbd counter-increment [options] <store-id>  Increment counter
+  bbd counter-decrement [options] <store-id>  Decrement counter
+  bbd counter-set [options] <store-id>     Set counter to specific value
+
 Daemon flags:
   --host-id           Unique host identifier (default: host1)
   --site              Site identifier (default: local)
@@ -475,6 +497,22 @@ Complete-modify options:
 Cancel-modify options:
   --lock              Lock ID from begin-modify (required)
 
+Counter-create options:
+  --value             Initial counter value (default: 0)
+  --min               Minimum value (requires --with-min)
+  --max               Maximum value (requires --with-max)
+  --with-min          Enable minimum bound
+  --with-max          Enable maximum bound
+  --name              Optional name for named counter
+  --reuse             Reuse existing named counter if exists
+  --ttl               TTL in seconds (0 = default 14 days)
+
+Counter-increment/decrement options:
+  --delta             Amount to increment/decrement (default: 1)
+
+Counter-set options:
+  --value             Value to set (required)
+
 Examples:
   # Start a single node (dev mode)
   bbd --dev --host-id=node1 --tcp=:8081 --uds=/tmp/bbd.sock
@@ -520,7 +558,34 @@ Examples:
   bbd promote --uds=/tmp/bbd.sock
 
   # Force release a stuck lock (ops command)
-  bbd release-lock --uds=/tmp/bbd.sock <store-id>`)
+  bbd release-lock --uds=/tmp/bbd.sock <store-id>
+
+  # Create an unbounded counter
+  bbd counter-create --value 0
+
+  # Create a bounded counter with min/max
+  bbd counter-create --value 50 --with-min --min 0 --with-max --max 100
+
+  # Create a named counter (for rate limiting)
+  bbd counter-create --name rate-limit:customer1 --value 0 --with-max --max 100
+
+  # Increment a counter
+  bbd counter-increment <store-id>
+
+  # Increment by 5
+  bbd counter-increment --delta 5 <store-id>
+
+  # Decrement a counter
+  bbd counter-decrement --delta 3 <store-id>
+
+  # Get counter value
+  bbd counter-get <store-id>
+
+  # Set counter to specific value
+  bbd counter-set --value 50 <store-id>
+
+  # Create named counter with bounds (for rate limiting)
+  bbd counter-create --name rate-limit:customer1 --value 0 --max 100 --with-max --ttl 60`)
 }
 
 func runStatusCommand(args []string) {
@@ -992,4 +1057,221 @@ func runCancelModifyCommand(args []string) {
 
 	checkResponse(resp, "cancel-modify")
 	fmt.Println("cancelled")
+}
+
+func runCounterCreateCommand(args []string) {
+	fs := flag.NewFlagSet("counter-create", flag.ExitOnError)
+	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
+	customerID := fs.String("customer", "test-customer", "customer ID")
+	ttl := fs.Int("ttl", 0, "TTL in seconds (0 = default 14 days)")
+	value := fs.Int64("value", 0, "initial counter value")
+	min := fs.Int64("min", 0, "minimum value (use --with-min to set)")
+	max := fs.Int64("max", 0, "maximum value (use --with-max to set)")
+	withMin := fs.Bool("with-min", false, "enable minimum bound")
+	withMax := fs.Bool("with-max", false, "enable maximum bound")
+	name := fs.String("name", "", "optional name for named counter")
+	reuse := fs.Bool("reuse", false, "reuse existing named counter if exists")
+	mustParseFlagSet(fs, args)
+
+	// Build JSON request body
+	reqBody := map[string]interface{}{
+		"type":  "counter",
+		"value": *value,
+	}
+	if *withMin {
+		reqBody["min"] = *min
+	}
+	if *withMax {
+		reqBody["max"] = *max
+	}
+
+	bodyJSON, _ := json.Marshal(reqBody)
+
+	headers := map[string]string{
+		"X-Customer-ID": *customerID,
+		"Content-Type":  "application/json",
+	}
+	if *ttl > 0 {
+		headers["BigBunny-Not-Valid-After"] = fmt.Sprintf("%d", *ttl)
+	}
+	if *reuse {
+		headers["BigBunny-Reuse-If-Exists"] = "true"
+	}
+
+	endpoint := "/api/v1/create"
+	if *name != "" {
+		endpoint = "/api/v1/create-by-name/" + *name
+	}
+
+	resp, err := doUDSRequestWithHeaders("POST", *udsPath, endpoint, strings.NewReader(string(bodyJSON)), headers)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	checkResponse(resp, "counter-create")
+
+	body, _ := io.ReadAll(resp.Body)
+	fmt.Println(strings.TrimSpace(string(body)))
+	printWarning(resp)
+}
+
+func runCounterGetCommand(args []string) {
+	fs := flag.NewFlagSet("counter-get", flag.ExitOnError)
+	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
+	customerID := fs.String("customer", "test-customer", "customer ID")
+	mustParseFlagSet(fs, args)
+
+	remaining := fs.Args()
+	if len(remaining) != 1 {
+		fmt.Fprintf(os.Stderr, "usage: bbd counter-get <store-id> [options]\n")
+		os.Exit(1)
+	}
+	storeID := remaining[0]
+
+	headers := map[string]string{"X-Customer-ID": *customerID}
+
+	resp, err := doUDSRequestWithHeaders("POST", *udsPath, "/api/v1/snapshot/"+storeID, nil, headers)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	checkResponse(resp, "counter-get")
+
+	body, _ := io.ReadAll(resp.Body)
+
+	// Pretty print JSON
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err == nil {
+		prettyJSON, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Println(string(prettyJSON))
+	} else {
+		fmt.Println(string(body))
+	}
+	printWarning(resp)
+}
+
+func runCounterIncrementCommand(args []string) {
+	fs := flag.NewFlagSet("counter-increment", flag.ExitOnError)
+	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
+	customerID := fs.String("customer", "test-customer", "customer ID")
+	delta := fs.Int64("delta", 1, "amount to increment (default 1)")
+	mustParseFlagSet(fs, args)
+
+	remaining := fs.Args()
+	if len(remaining) != 1 {
+		fmt.Fprintf(os.Stderr, "usage: bbd counter-increment <store-id> [--delta N] [options]\n")
+		os.Exit(1)
+	}
+	storeID := remaining[0]
+
+	reqBody := map[string]interface{}{"delta": *delta}
+	bodyJSON, _ := json.Marshal(reqBody)
+
+	headers := map[string]string{
+		"X-Customer-ID": *customerID,
+		"Content-Type":  "application/json",
+	}
+
+	resp, err := doUDSRequestWithHeaders("POST", *udsPath, "/api/v1/increment/"+storeID, strings.NewReader(string(bodyJSON)), headers)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	checkResponse(resp, "counter-increment")
+
+	body, _ := io.ReadAll(resp.Body)
+
+	// Pretty print JSON response
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err == nil {
+		prettyJSON, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Println(string(prettyJSON))
+	} else {
+		fmt.Println(string(body))
+	}
+	printWarning(resp)
+}
+
+func runCounterDecrementCommand(args []string) {
+	fs := flag.NewFlagSet("counter-decrement", flag.ExitOnError)
+	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
+	customerID := fs.String("customer", "test-customer", "customer ID")
+	delta := fs.Int64("delta", 1, "amount to decrement (default 1)")
+	mustParseFlagSet(fs, args)
+
+	remaining := fs.Args()
+	if len(remaining) != 1 {
+		fmt.Fprintf(os.Stderr, "usage: bbd counter-decrement <store-id> [--delta N] [options]\n")
+		os.Exit(1)
+	}
+	storeID := remaining[0]
+
+	reqBody := map[string]interface{}{"delta": *delta}
+	bodyJSON, _ := json.Marshal(reqBody)
+
+	headers := map[string]string{
+		"X-Customer-ID": *customerID,
+		"Content-Type":  "application/json",
+	}
+
+	resp, err := doUDSRequestWithHeaders("POST", *udsPath, "/api/v1/decrement/"+storeID, strings.NewReader(string(bodyJSON)), headers)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	checkResponse(resp, "counter-decrement")
+
+	body, _ := io.ReadAll(resp.Body)
+
+	// Pretty print JSON response
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err == nil {
+		prettyJSON, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Println(string(prettyJSON))
+	} else {
+		fmt.Println(string(body))
+	}
+	printWarning(resp)
+}
+
+func runCounterSetCommand(args []string) {
+	fs := flag.NewFlagSet("counter-set", flag.ExitOnError)
+	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
+	customerID := fs.String("customer", "test-customer", "customer ID")
+	value := fs.Int64("value", 0, "value to set (required)")
+	mustParseFlagSet(fs, args)
+
+	remaining := fs.Args()
+	if len(remaining) != 1 {
+		fmt.Fprintf(os.Stderr, "usage: bbd counter-set <store-id> --value N [options]\n")
+		os.Exit(1)
+	}
+	storeID := remaining[0]
+
+	reqBody := map[string]interface{}{"value": *value}
+	bodyJSON, _ := json.Marshal(reqBody)
+
+	headers := map[string]string{
+		"X-Customer-ID": *customerID,
+		"Content-Type":  "application/json",
+	}
+
+	resp, err := doUDSRequestWithHeaders("POST", *udsPath, "/api/v1/update/"+storeID, strings.NewReader(string(bodyJSON)), headers)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	checkResponse(resp, "counter-set")
+	fmt.Println("ok")
+	printWarning(resp)
 }

@@ -300,7 +300,7 @@ func (w *soakWorker) doCreate() error {
 		w.metrics.recordRequest("create", dur, err)
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, _ := io.ReadAll(resp.Body)
 
@@ -341,7 +341,7 @@ func (w *soakWorker) doRead() error {
 		w.metrics.recordRequest("read", dur, err)
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
@@ -375,7 +375,7 @@ func (w *soakWorker) doModify() error {
 		w.metrics.recordRequest("modify", time.Since(start), err)
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		err = fmt.Errorf("begin-modify failed: %d", resp.StatusCode)
@@ -402,7 +402,7 @@ func (w *soakWorker) doModify() error {
 		w.metrics.recordRequest("modify", dur, err)
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
@@ -437,7 +437,7 @@ func (w *soakWorker) doDelete() error {
 		w.metrics.recordRequest("delete", dur, err)
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode == http.StatusOK {
@@ -518,7 +518,7 @@ func runSoakTest(t *testing.T, cfg soakConfig) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	if err := cluster.Start(); err != nil {
 		t.Fatalf("failed to start cluster: %v", err)

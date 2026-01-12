@@ -36,17 +36,17 @@ type httpError struct {
 }
 
 var errorMap = map[error]httpError{
-	store.ErrStoreNotFound:      {ErrCodeNotFound, "store not found", http.StatusNotFound},
-	store.ErrStoreExists:        {"", "store already exists", http.StatusConflict},
-	store.ErrStoreExpired:       {ErrCodeStoreExpired, "store expired", http.StatusGone},
-	store.ErrStoreLocked:        {ErrCodeStoreLocked, "store is locked", http.StatusConflict},
-	store.ErrLockMismatch:       {ErrCodeLockMismatch, "lock mismatch", http.StatusConflict},
-	store.ErrUnauthorized:       {ErrCodeUnauthorized, "unauthorized", http.StatusForbidden},
-	store.ErrCapacityExceeded:   {ErrCodeCapacityExceeded, "capacity exceeded", http.StatusInsufficientStorage},
-	store.ErrTypeMismatch:       {ErrCodeTypeMismatch, "store type mismatch", http.StatusBadRequest},
-	store.ErrOverflow:           {ErrCodeOverflow, "counter overflow", http.StatusConflict},
-	store.ErrValueOutOfBounds:   {ErrCodeValueOutOfBounds, "value out of bounds", http.StatusBadRequest},
-	store.ErrInvalidBounds:      {ErrCodeInvalidBounds, "invalid bounds", http.StatusBadRequest},
+	store.ErrStoreNotFound:    {ErrCodeNotFound, "store not found", http.StatusNotFound},
+	store.ErrStoreExists:      {"", "store already exists", http.StatusConflict},
+	store.ErrStoreExpired:     {ErrCodeStoreExpired, "store expired", http.StatusGone},
+	store.ErrStoreLocked:      {ErrCodeStoreLocked, "store is locked", http.StatusConflict},
+	store.ErrLockMismatch:     {ErrCodeLockMismatch, "lock mismatch", http.StatusConflict},
+	store.ErrUnauthorized:     {ErrCodeUnauthorized, "unauthorized", http.StatusForbidden},
+	store.ErrCapacityExceeded: {ErrCodeCapacityExceeded, "capacity exceeded", http.StatusInsufficientStorage},
+	store.ErrTypeMismatch:     {ErrCodeTypeMismatch, "store type mismatch", http.StatusBadRequest},
+	store.ErrOverflow:         {ErrCodeOverflow, "counter overflow", http.StatusConflict},
+	store.ErrValueOutOfBounds: {ErrCodeValueOutOfBounds, "value out of bounds", http.StatusBadRequest},
+	store.ErrInvalidBounds:    {ErrCodeInvalidBounds, "invalid bounds", http.StatusBadRequest},
 
 	registry.ErrNameExists:          {"", "name already exists", http.StatusConflict},
 	registry.ErrNameReserved:        {"", "name reservation in progress", http.StatusConflict},

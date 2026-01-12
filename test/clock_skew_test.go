@@ -30,7 +30,7 @@ func TestClockSkew_ForwardSkewedSecondary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	if err := cluster.Start(); err != nil {
 		t.Fatalf("failed to start cluster: %v", err)
@@ -97,7 +97,7 @@ func TestClockSkew_BackwardSkewedSecondary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	if err := cluster.Start(); err != nil {
 		t.Fatalf("failed to start cluster: %v", err)
@@ -147,7 +147,7 @@ func TestClockSkew_ForwardSkewedPrimary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	if err := cluster.Start(); err != nil {
 		t.Fatalf("failed to start cluster: %v", err)
@@ -185,7 +185,7 @@ func TestClockSkew_DuringJoiningRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	// Partition before start so node2 can't recover initially
 	cluster.Partition("node1", "node2")
@@ -232,7 +232,7 @@ func TestClockSkew_LockUnknownWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	if err := cluster.Start(); err != nil {
 		t.Fatalf("failed to start cluster: %v", err)
@@ -288,7 +288,7 @@ func TestClockSkew_StatusConsistency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	if err := cluster.Start(); err != nil {
 		t.Fatalf("failed to start cluster: %v", err)
@@ -339,7 +339,7 @@ func TestClockSkew_EpochMonotonicity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	if err := cluster.Start(); err != nil {
 		t.Fatalf("failed to start cluster: %v", err)

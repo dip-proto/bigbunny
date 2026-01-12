@@ -22,7 +22,7 @@ func TestCluster_CounterReplication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	if err := cluster.Start(); err != nil {
 		t.Fatalf("failed to start cluster: %v", err)
@@ -87,7 +87,7 @@ func TestCluster_CounterBoundedLoss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	if err := cluster.Start(); err != nil {
 		t.Fatalf("failed to start cluster: %v", err)
@@ -151,7 +151,7 @@ func TestCluster_CounterEpochFencing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	if err := cluster.Start(); err != nil {
 		t.Fatalf("failed to start cluster: %v", err)
@@ -212,7 +212,7 @@ func TestCluster_CounterSecondaryReads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	if err := cluster.Start(); err != nil {
 		t.Fatalf("failed to start cluster: %v", err)
@@ -271,7 +271,7 @@ func TestCluster_CounterRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	if err := cluster.Start(); err != nil {
 		t.Fatalf("failed to start cluster: %v", err)
@@ -382,7 +382,7 @@ func createCounter(t *testing.T, addr, customerID string, value int64, min, max 
 	if err != nil {
 		t.Fatalf("create counter request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -408,7 +408,7 @@ func incrementCounter(t *testing.T, addr, storeID, customerID string, delta int6
 	if err != nil {
 		t.Fatalf("increment request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)

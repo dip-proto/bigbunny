@@ -58,8 +58,8 @@ func TestAPIIntegration(t *testing.T) {
 	defer os.Remove(sockPath)
 
 	server := &http.Server{Handler: mux}
-	go server.Serve(listener)
-	defer server.Close()
+	go func() { _ = server.Serve(listener) }()
+	defer func() { _ = server.Close() }()
 
 	// Create HTTP client that uses UDS
 	client := &http.Client{
@@ -80,7 +80,7 @@ func TestAPIIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create request failed: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
@@ -114,7 +114,7 @@ func TestAPIIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("snapshot failed: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		body, _ := io.ReadAll(resp.Body)
 		if string(body) != "snapshot test" {
@@ -477,8 +477,8 @@ func TestLeaderChangedErrorCode(t *testing.T) {
 	defer os.Remove(sockPath)
 
 	server := &http.Server{Handler: mux}
-	go server.Serve(listener)
-	defer server.Close()
+	go func() { _ = server.Serve(listener) }()
+	defer func() { _ = server.Close() }()
 
 	client := &http.Client{
 		Transport: &http.Transport{
@@ -497,7 +497,7 @@ func TestLeaderChangedErrorCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("expected 503 for secondary, got %d", resp.StatusCode)
@@ -549,8 +549,8 @@ func TestCapacityExceeded(t *testing.T) {
 	defer os.Remove(sockPath)
 
 	server := &http.Server{Handler: mux}
-	go server.Serve(listener)
-	defer server.Close()
+	go func() { _ = server.Serve(listener) }()
+	defer func() { _ = server.Close() }()
 
 	client := &http.Client{
 		Transport: &http.Transport{
@@ -580,7 +580,7 @@ func TestCapacityExceeded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second create failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusInsufficientStorage {
 		body, _ := io.ReadAll(resp.Body)
@@ -631,8 +631,8 @@ func TestMemoryTrackingOnDelete(t *testing.T) {
 	defer os.Remove(sockPath)
 
 	server := &http.Server{Handler: mux}
-	go server.Serve(listener)
-	defer server.Close()
+	go func() { _ = server.Serve(listener) }()
+	defer func() { _ = server.Close() }()
 
 	client := &http.Client{
 		Transport: &http.Transport{
@@ -723,8 +723,8 @@ func TestCapacityExceededOnCompleteModify(t *testing.T) {
 	defer os.Remove(sockPath)
 
 	server := &http.Server{Handler: mux}
-	go server.Serve(listener)
-	defer server.Close()
+	go func() { _ = server.Serve(listener) }()
+	defer func() { _ = server.Close() }()
 
 	client := &http.Client{
 		Transport: &http.Transport{
@@ -757,7 +757,7 @@ func TestCapacityExceededOnCompleteModify(t *testing.T) {
 	if err != nil {
 		t.Fatalf("complete-modify failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusInsufficientStorage {
 		body, _ := io.ReadAll(resp.Body)

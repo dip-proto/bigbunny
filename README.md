@@ -48,6 +48,7 @@ For a complete walkthrough, see the [Quick Start Guide](doc/quickstart.md).
 
 - **In-Memory Storage** — Microsecond-level read/write latency
 - **Lock-Based Serialization** — Prevents race conditions for read-modify-write operations
+- **Atomic Counters** — Server-side increment/decrement with optional bounds (min/max)
 - **Automatic Failover** — Two-node replication with ~4 second failover time
 - **Encrypted Store IDs** — AES-128-SIV encryption provides security and customer isolation
 - **Named Stores** — Optional human-readable names instead of opaque IDs
@@ -174,6 +175,19 @@ curl -X POST --unix-socket /tmp/bbd.sock \
   -d "cart data" \
   http://localhost/api/v1/create-by-name/shopping-cart
 
+# Atomic counters
+curl -X POST --unix-socket /tmp/bbd.sock \
+  -H "X-Customer-ID: acme-corp" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"counter","value":0,"max":100}' \
+  http://localhost/api/v1/create
+
+curl -X POST --unix-socket /tmp/bbd.sock \
+  -H "X-Customer-ID: acme-corp" \
+  -H "Content-Type: application/json" \
+  -d '{"delta":1}' \
+  http://localhost/api/v1/increment/{store-id}
+
 # Check node status
 curl --unix-socket /tmp/bbd.sock http://localhost/status
 ```
@@ -223,11 +237,12 @@ See the [Security Guide](doc/security.md) for the complete threat analysis.
 ## Testing
 
 ```bash
-go test ./...                      # All tests
-go test ./test -run TestStore -v   # Specific test
-go test ./test -run Cluster -v     # Cluster tests
-go test ./test -run ClockSkew -v   # Clock skew tests
-SOAK=1 go test ./test -run Soak    # Full soak test (~3 min)
+go test ./...                       # All tests
+go test ./test -run TestStore -v    # Store unit tests
+go test ./test -run Counter -v      # Counter tests
+go test ./test -run Cluster -v      # Cluster tests
+go test ./test -run ClockSkew -v    # Clock skew tests
+SOAK=1 go test ./test -run Soak     # Full soak test (~3 min)
 ```
 
-The test suite includes 94 tests covering unit, integration, cluster operations, clock skew scenarios, concurrent lock contention, and soak testing.
+The test suite includes 119 tests covering unit tests (75), integration tests (14), cluster operations (13), clock skew scenarios (7), concurrent lock contention (8), and soak testing (2). This includes 25 tests for atomic counter operations.

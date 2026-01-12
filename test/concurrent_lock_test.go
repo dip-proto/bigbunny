@@ -222,8 +222,8 @@ func TestConcurrentAPILockContention(t *testing.T) {
 	}()
 
 	server := &http.Server{Handler: mux}
-	go server.Serve(listener)
-	defer server.Close()
+	go func() { _ = server.Serve(listener) }()
+	defer func() { _ = server.Close() }()
 
 	client := &http.Client{
 		Transport: &http.Transport{
@@ -263,7 +263,7 @@ func TestConcurrentAPILockContention(t *testing.T) {
 				t.Errorf("client %d request failed: %v", clientID, err)
 				return
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode == http.StatusOK {
 				atomic.AddInt32(&successCount, 1)

@@ -18,7 +18,7 @@ func TestCluster_HappyPathReplication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	if err := cluster.Start(); err != nil {
 		t.Fatalf("failed to start cluster: %v", err)
@@ -83,7 +83,7 @@ func TestCluster_NamedStoreReplication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	if err := cluster.Start(); err != nil {
 		t.Fatalf("failed to start cluster: %v", err)
@@ -135,7 +135,7 @@ func TestCluster_Failover(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	if err := cluster.Start(); err != nil {
 		t.Fatalf("failed to start cluster: %v", err)
@@ -208,7 +208,7 @@ func TestCluster_JoiningRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	// Block node2 before starting (simulates failed initial recovery)
 	cluster.Partition("node1", "node2")
@@ -269,7 +269,7 @@ func TestCluster_DegradedWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	if err := cluster.Start(); err != nil {
 		t.Fatalf("failed to start cluster: %v", err)
@@ -292,7 +292,7 @@ func TestCluster_DegradedWrite(t *testing.T) {
 
 	// Create a store - should succeed with degraded warning
 	resp := createStoreRaw(t, primary.Addr(), "customer1", []byte("degraded write"))
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -311,7 +311,7 @@ func TestCluster_LockStateUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	if err := cluster.Start(); err != nil {
 		t.Fatalf("failed to start cluster: %v", err)
@@ -350,7 +350,7 @@ func TestCluster_LockStateUnknown(t *testing.T) {
 
 	// Immediately after promotion, begin-modify should return LockStateUnknown
 	resp := beginModifyRaw(t, newPrimary.Addr(), storeID, "customer1")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusConflict {
 		body, _ := io.ReadAll(resp.Body)
@@ -370,7 +370,7 @@ func TestCluster_LockStateUnknown(t *testing.T) {
 	lockWindowTimeout := cfg.ModifyTimeout + 500*time.Millisecond
 	err = cluster.WaitForCondition(func() bool {
 		resp2 := beginModifyRaw(t, newPrimary.Addr(), storeID, "customer1")
-		defer resp2.Body.Close()
+		defer func() { _ = resp2.Body.Close() }()
 		errorCode2 := resp2.Header.Get("BigBunny-Error-Code")
 		return errorCode2 != "LockStateUnknown"
 	}, lockWindowTimeout)
@@ -389,7 +389,7 @@ func TestCluster_EpochMonotonicity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	if err := cluster.Start(); err != nil {
 		t.Fatalf("failed to start cluster: %v", err)
@@ -443,7 +443,7 @@ func TestCluster_EpochMonotonicity(t *testing.T) {
 
 func createStore(t *testing.T, addr, customerID string, body []byte) string {
 	resp := createStoreRaw(t, addr, customerID, body)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -483,7 +483,7 @@ func createNamedStore(t *testing.T, addr, customerID, name string, body []byte) 
 	if err != nil {
 		t.Fatalf("create request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -506,7 +506,7 @@ func lookupStoreByName(t *testing.T, addr, customerID, name string) string {
 	if err != nil {
 		t.Fatalf("lookup request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -536,7 +536,7 @@ func modifyStore(t *testing.T, addr, storeID, customerID string, body []byte) {
 	if err != nil {
 		t.Fatalf("complete-modify failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -546,7 +546,7 @@ func modifyStore(t *testing.T, addr, storeID, customerID string, body []byte) {
 
 func beginModify(t *testing.T, addr, storeID, customerID string) string {
 	resp := beginModifyRaw(t, addr, storeID, customerID)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -589,7 +589,7 @@ func deleteStore(t *testing.T, addr, storeID, customerID string) {
 	if err != nil {
 		t.Fatalf("delete request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -604,7 +604,7 @@ func TestCluster_InternalAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
-	defer cluster.Stop()
+	defer func() { _ = cluster.Stop() }()
 
 	if err := cluster.Start(); err != nil {
 		t.Fatalf("failed to start cluster: %v", err)
