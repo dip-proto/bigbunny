@@ -409,27 +409,26 @@ Let's look at some common patterns you'll use when building applications on Big 
 
 ### Rate Limiting Counters
 
-Implement a per-user rate limiter that allows 100 requests per minute:
+Implement a per-user rate limiter that allows 100 requests per minute using Big Bunny's atomic counter feature:
 
 ```bash
 USER_ID="user123"
-COUNTER=$(./bbd create --name "${USER_ID}-rate-limit" --data "0" --ttl 60 --reuse)
 
-# On each request, increment the counter
-LOCK=$(./bbd begin-modify $COUNTER)
-COUNT=$(./bbd get $COUNTER)
+# Create a bounded counter: max 100, expires after 60 seconds
+COUNTER=$(./bbd counter-create --name "${USER_ID}-rate-limit" --value 0 \
+  --with-max --max 100 --ttl 60 --reuse)
 
-if [ "$COUNT" -ge 100 ]; then
-  ./bbd cancel-modify $COUNTER -lock "$LOCK"
+# On each request, increment the counter atomically
+RESULT=$(./bbd counter-increment $COUNTER)
+
+# Check if bounded (at limit)
+if echo "$RESULT" | grep -q '"bounded": true'; then
   echo "Rate limit exceeded"
   exit 1
 fi
-
-NEW_COUNT=$((COUNT + 1))
-./bbd complete-modify -lock "$LOCK" -data "$NEW_COUNT" $COUNTER
 ```
 
-The counter expires after 60 seconds (the TTL), which resets the limit automatically.
+The atomic counter handles locking internally, making it faster and simpler than the three-phase modify protocol. The `--with-max 100` enforces the limit, and when the counter reaches 100, the `bounded` field becomes `true`. The counter expires after 60 seconds (the TTL), which resets the limit automatically.
 
 ### Shopping Cart
 
