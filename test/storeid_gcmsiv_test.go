@@ -23,7 +23,7 @@ func TestSealOpenRoundTrip(t *testing.T) {
 		t.Fatalf("Seal failed: %v", err)
 	}
 
-	components, err := cipher.Open(storeID, customerID)
+	components, err := cipher.Open(storeID, site, customerID)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
@@ -48,7 +48,8 @@ func TestWrongCustomerIDFails(t *testing.T) {
 		t.Fatalf("Seal failed: %v", err)
 	}
 
-	_, err = cipher.Open(storeID, "customer2")
+	// Wrong customer should fail - key derivation uses customer, so decryption will fail
+	_, err = cipher.Open(storeID, "local", "customer2")
 	if err == nil {
 		t.Fatal("Open should fail with wrong customerID")
 	}
@@ -68,7 +69,7 @@ func TestTamperedCiphertextFails(t *testing.T) {
 
 	tampered := storeID[:len(storeID)-4] + "XXXX"
 
-	_, err = cipher.Open(tampered, "customer1")
+	_, err = cipher.Open(tampered, "local", "customer1")
 	if err == nil {
 		t.Fatal("Open should fail with tampered ciphertext")
 	}
@@ -85,7 +86,7 @@ func TestTamperedKeyIDFails(t *testing.T) {
 
 	tampered := "v1:x:" + storeID[5:]
 
-	_, err = cipher.Open(tampered, "customer1")
+	_, err = cipher.Open(tampered, "local", "customer1")
 	if err == nil {
 		t.Fatal("Open should fail with unknown key ID")
 	}
@@ -110,7 +111,7 @@ func TestKeyRotation(t *testing.T) {
 	newKeys, _ := auth.NewKeySet(map[string][]byte{"0": key0, "1": key1}, "1")
 	newCipher := auth.NewCipher(newKeys)
 
-	components, err := newCipher.Open(storeID, "customer1")
+	components, err := newCipher.Open(storeID, "local", "customer1")
 	if err != nil {
 		t.Fatalf("Open with new keyset failed: %v", err)
 	}
@@ -283,7 +284,7 @@ func TestInvalidStoreIDFormat(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := cipher.Open(tt.storeID, "customer1")
+			_, err := cipher.Open(tt.storeID, "local", "customer1")
 			if err == nil {
 				t.Error("Open should fail for invalid store ID")
 			}
@@ -345,7 +346,7 @@ func TestEncryptedStoreIDIntegration(t *testing.T) {
 	}
 
 	// Verify we can decrypt and get back the components
-	components, err := cipher.Open(storeID, customerID)
+	components, err := cipher.Open(storeID, site, customerID)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
@@ -358,7 +359,7 @@ func TestEncryptedStoreIDIntegration(t *testing.T) {
 	}
 
 	// Verify wrong customer can't decrypt
-	_, err = cipher.Open(storeID, "wrong-customer")
+	_, err = cipher.Open(storeID, site, "wrong-customer")
 	if err == nil {
 		t.Error("should fail to decrypt with wrong customer")
 	}
@@ -420,12 +421,41 @@ func TestLongKeyIDs(t *testing.T) {
 	}
 
 	// Verify decryption works
-	components, err := cipher.Open(storeID, "customer1")
+	components, err := cipher.Open(storeID, "local", "customer1")
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
 	if components.Site != "local" {
 		t.Errorf("site mismatch: got %q", components.Site)
+	}
+}
+
+func TestWrongSiteFails(t *testing.T) {
+	ks := auth.DevKeySet()
+	cipher := auth.NewCipher(ks)
+
+	// Create store ID for site-a
+	storeID, err := cipher.Seal("site-a", "abcdefghijk", "1234567890abcdef", "customer1")
+	if err != nil {
+		t.Fatalf("Seal failed: %v", err)
+	}
+
+	// Should succeed with correct site
+	components, err := cipher.Open(storeID, "site-a", "customer1")
+	if err != nil {
+		t.Fatalf("Open with correct site failed: %v", err)
+	}
+	if components.Site != "site-a" {
+		t.Errorf("site mismatch: got %q, want site-a", components.Site)
+	}
+
+	// Should fail with wrong site - key derivation includes site, so decryption will fail
+	_, err = cipher.Open(storeID, "site-b", "customer1")
+	if err == nil {
+		t.Fatal("Open should fail with wrong site")
+	}
+	if err != auth.ErrInvalidStoreID {
+		t.Errorf("expected ErrInvalidStoreID, got: %v", err)
 	}
 }
 

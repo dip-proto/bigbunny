@@ -99,7 +99,7 @@ func (s *Server) Shutdown() {
 }
 
 func (s *Server) openStoreID(storeID, customerID string) (*auth.StoreIDComponents, error) {
-	return s.cipher.Open(storeID, customerID)
+	return s.cipher.Open(storeID, s.config.Site, customerID)
 }
 
 // RegisterRoutes attaches all public and internal API endpoints to the given mux, including store operations and replication handlers.
@@ -1116,9 +1116,9 @@ func (s *Server) handleReplicate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate store ID before applying replication
-	// This ensures the store ID is properly formatted and bound to the claimed customer
+	// This ensures the store ID is properly formatted and bound to the claimed customer and site
 	if msg.StoreID != "" && msg.CustomerID != "" {
-		components, err := s.cipher.Open(msg.StoreID, msg.CustomerID)
+		components, err := s.cipher.Open(msg.StoreID, s.config.Site, msg.CustomerID)
 		if err != nil {
 			http.Error(w, "invalid store ID in replication message", http.StatusBadRequest)
 			return

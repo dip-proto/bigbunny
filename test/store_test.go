@@ -134,7 +134,7 @@ func TestStoreIDGeneration(t *testing.T) {
 	}
 
 	// Verify we can decrypt and get back components
-	components, err := cipher.Open(storeID, "customer1")
+	components, err := cipher.Open(storeID, "local", "customer1")
 	if err != nil {
 		t.Fatalf("open store ID failed: %v", err)
 	}

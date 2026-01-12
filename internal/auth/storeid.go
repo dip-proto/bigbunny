@@ -22,7 +22,7 @@ const StoreIDVersion = "v1"
 const AADPrefix = "storeid:v1:"
 
 // KeyInfoPrefix is the HKDF info string prefix used when deriving per-customer
-// encryption keys from the master key.
+// encryption keys from the master key. The full info is: prefix + site + ":" + customerID
 const KeyInfoPrefix = "storeid:v1:enc:"
 
 // KeySize is the required length in bytes for master encryption keys.
@@ -61,13 +61,15 @@ type StoreIDComponents struct {
 
 // StoreIDCipher encrypts and decrypts store IDs using AES-SIV with
 // per-customer key derivation. This ensures store IDs are opaque to clients
-// and bound to specific customers.
+// and bound to specific customers and sites.
 type StoreIDCipher interface {
 	// Seal encrypts the store components into an opaque store ID token.
 	Seal(site, shardID, unique, customerID string) (string, error)
 	// Open decrypts and validates a store ID, returning its components.
-	// Returns ErrInvalidStoreID if decryption fails or customer doesn't match.
-	Open(storeID, customerID string) (*StoreIDComponents, error)
+	// The expectedSite must match the site embedded in the store ID.
+	// Returns ErrInvalidStoreID if decryption fails, customer doesn't match,
+	// or the decrypted site doesn't match expectedSite.
+	Open(storeID, expectedSite, customerID string) (*StoreIDComponents, error)
 }
 
 // KeySet manages a set of encryption keys for store ID encryption.
@@ -171,13 +173,15 @@ func DevKeySet() *KeySet {
 	}
 }
 
-func (ks *KeySet) deriveKey(keyID string, customerID string) ([]byte, error) {
+func (ks *KeySet) deriveKey(keyID, site, customerID string) ([]byte, error) {
 	master, ok := ks.keys[keyID]
 	if !ok {
 		return nil, ErrUnknownKeyID
 	}
 
-	info := []byte(KeyInfoPrefix + customerID)
+	// Include site in key derivation to cryptographically bind store IDs to their site.
+	// A store ID from site-A will fail to decrypt on site-B even with the same master key.
+	info := []byte(KeyInfoPrefix + site + ":" + customerID)
 	reader := hkdf.New(sha256.New, master, nil, info)
 	key := make([]byte, KeySize)
 	if _, err := io.ReadFull(reader, key); err != nil {
@@ -218,7 +222,7 @@ func (c *cipherImpl) Seal(site, shardID, unique, customerID string) (string, err
 	}
 
 	keyID := c.keySet.currentID
-	derivedKey, err := c.keySet.deriveKey(keyID, customerID)
+	derivedKey, err := c.keySet.deriveKey(keyID, site, customerID)
 	if err != nil {
 		return "", err
 	}
@@ -236,7 +240,10 @@ func (c *cipherImpl) Seal(site, shardID, unique, customerID string) (string, err
 	return fmt.Sprintf("%s:%s:%s", StoreIDVersion, keyID, encoded), nil
 }
 
-func (c *cipherImpl) Open(storeID, customerID string) (*StoreIDComponents, error) {
+func (c *cipherImpl) Open(storeID, expectedSite, customerID string) (*StoreIDComponents, error) {
+	if !sitePattern.MatchString(expectedSite) {
+		return nil, ErrInvalidStoreID
+	}
 	if !customerPattern.MatchString(customerID) {
 		return nil, ErrInvalidStoreID
 	}
@@ -263,7 +270,8 @@ func (c *cipherImpl) Open(storeID, customerID string) (*StoreIDComponents, error
 		return nil, ErrInvalidStoreID
 	}
 
-	derivedKey, err := c.keySet.deriveKey(keyID, customerID)
+	// Use expectedSite in key derivation - this cryptographically binds the store ID to its site
+	derivedKey, err := c.keySet.deriveKey(keyID, expectedSite, customerID)
 	if err != nil {
 		return nil, ErrInvalidStoreID
 	}
@@ -276,6 +284,7 @@ func (c *cipherImpl) Open(storeID, customerID string) (*StoreIDComponents, error
 	aad := []byte(AADPrefix + customerID)
 	plaintext, err := aead.Open(nil, nil, ciphertext, aad)
 	if err != nil {
+		// Decryption failed - wrong site, wrong customer, or corrupted data
 		return nil, ErrInvalidStoreID
 	}
 
@@ -288,9 +297,11 @@ func (c *cipherImpl) Open(storeID, customerID string) (*StoreIDComponents, error
 	shardID := plaintextParts[1]
 	unique := plaintextParts[2]
 
-	if !sitePattern.MatchString(site) {
+	// Verify the decrypted site matches expected (defense in depth)
+	if site != expectedSite {
 		return nil, ErrInvalidStoreID
 	}
+
 	if !shardIDPattern.MatchString(shardID) {
 		return nil, ErrInvalidStoreID
 	}

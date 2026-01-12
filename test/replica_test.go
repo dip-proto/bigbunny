@@ -495,3 +495,109 @@ func TestHandleHeartbeat_RetriesRecoveryWhenJoining(t *testing.T) {
 		t.Errorf("expected still JOINING after retry heartbeat, got %v", mgr.Role())
 	}
 }
+
+func TestHandleHeartbeat_RejectsSiteMismatch(t *testing.T) {
+	storeMgr := store.NewManager()
+	hosts := []*routing.Host{
+		{ID: "host1", Address: "localhost:8081", Healthy: true},
+		{ID: "host2", Address: "localhost:8082", Healthy: true},
+	}
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
+	config := replica.DefaultConfig("host1", "site-A")
+
+	mgr := replica.NewManager(config, storeMgr, hasher)
+	mgr.SetRole(replica.RoleSecondary)
+
+	initialEpoch := mgr.LeaderEpoch()
+
+	// Receive heartbeat from peer with different site
+	hb := &replica.HeartbeatMessage{
+		HostID:      "host2",
+		Site:        "site-B", // Different site!
+		LeaderEpoch: initialEpoch + 1,
+		Timestamp:   time.Now(),
+	}
+
+	ack, err := mgr.HandleHeartbeat(hb)
+
+	// Should return error for site mismatch
+	if err != replica.ErrSiteMismatch {
+		t.Errorf("expected ErrSiteMismatch, got %v", err)
+	}
+	if ack != nil {
+		t.Errorf("expected nil ack on site mismatch, got %v", ack)
+	}
+
+	// Should NOT change role or epoch
+	if mgr.Role() != replica.RoleSecondary {
+		t.Errorf("expected role unchanged on site mismatch, got %v", mgr.Role())
+	}
+	if mgr.LeaderEpoch() != initialEpoch {
+		t.Errorf("expected epoch unchanged on site mismatch, got %d", mgr.LeaderEpoch())
+	}
+}
+
+func TestHandleHeartbeat_AcceptsSameSite(t *testing.T) {
+	storeMgr := store.NewManager()
+	hosts := []*routing.Host{
+		{ID: "host1", Address: "localhost:8081", Healthy: true},
+		{ID: "host2", Address: "localhost:8082", Healthy: true},
+	}
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
+	config := replica.DefaultConfig("host1", "site-A")
+
+	mgr := replica.NewManager(config, storeMgr, hasher)
+	mgr.SetRole(replica.RoleSecondary)
+
+	// Receive heartbeat from peer with same site
+	hb := &replica.HeartbeatMessage{
+		HostID:      "host2",
+		Site:        "site-A", // Same site
+		LeaderEpoch: 1,
+		Timestamp:   time.Now(),
+	}
+
+	ack, err := mgr.HandleHeartbeat(hb)
+
+	// Should succeed
+	if err != nil {
+		t.Errorf("expected no error for same site, got %v", err)
+	}
+	if ack == nil {
+		t.Error("expected ack for same site")
+	}
+	if ack != nil && ack.Site != "site-A" {
+		t.Errorf("expected ack site to be 'site-A', got %q", ack.Site)
+	}
+}
+
+func TestHandleHeartbeat_AcceptsEmptySiteForBackwardsCompat(t *testing.T) {
+	storeMgr := store.NewManager()
+	hosts := []*routing.Host{
+		{ID: "host1", Address: "localhost:8081", Healthy: true},
+		{ID: "host2", Address: "localhost:8082", Healthy: true},
+	}
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
+	config := replica.DefaultConfig("host1", "site-A")
+
+	mgr := replica.NewManager(config, storeMgr, hasher)
+	mgr.SetRole(replica.RoleSecondary)
+
+	// Receive heartbeat from old peer without site (backwards compatibility)
+	hb := &replica.HeartbeatMessage{
+		HostID:      "host2",
+		Site:        "", // Empty - old node
+		LeaderEpoch: 1,
+		Timestamp:   time.Now(),
+	}
+
+	ack, err := mgr.HandleHeartbeat(hb)
+
+	// Should succeed for backwards compatibility
+	if err != nil {
+		t.Errorf("expected no error for empty site (backwards compat), got %v", err)
+	}
+	if ack == nil {
+		t.Error("expected ack for empty site")
+	}
+}
