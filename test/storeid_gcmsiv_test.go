@@ -459,6 +459,60 @@ func TestWrongSiteFails(t *testing.T) {
 	}
 }
 
+func TestDisableSiteVerification(t *testing.T) {
+	ks := auth.DevKeySet()
+	// Create cipher with site verification disabled
+	cipher := auth.NewCipher(ks, auth.WithDisableSiteVerification())
+
+	// Create store ID for site-a
+	storeID, err := cipher.Seal("site-a", "abcdefghijk", "1234567890abcdef", "customer1")
+	if err != nil {
+		t.Fatalf("Seal failed: %v", err)
+	}
+
+	// Should succeed with correct site
+	components, err := cipher.Open(storeID, "site-a", "customer1")
+	if err != nil {
+		t.Fatalf("Open with correct site failed: %v", err)
+	}
+	if components.Site != "site-a" {
+		t.Errorf("site mismatch: got %q, want site-a", components.Site)
+	}
+
+	// Should ALSO succeed with different site when verification is disabled
+	// (site is not included in HKDF, so decryption succeeds)
+	components, err = cipher.Open(storeID, "site-b", "customer1")
+	if err != nil {
+		t.Fatalf("Open with different site should succeed when verification disabled: %v", err)
+	}
+	// The decrypted site should still be the original site from the plaintext
+	if components.Site != "site-a" {
+		t.Errorf("decrypted site mismatch: got %q, want site-a", components.Site)
+	}
+}
+
+func TestDisableSiteVerificationCrossSiteInterop(t *testing.T) {
+	ks := auth.DevKeySet()
+	// Both ciphers have site verification disabled
+	cipherA := auth.NewCipher(ks, auth.WithDisableSiteVerification())
+	cipherB := auth.NewCipher(ks, auth.WithDisableSiteVerification())
+
+	// Create store ID on site-a
+	storeID, err := cipherA.Seal("site-a", "abcdefghijk", "1234567890abcdef", "customer1")
+	if err != nil {
+		t.Fatalf("Seal failed: %v", err)
+	}
+
+	// Should be able to decrypt on site-b (different expectedSite, but verification disabled)
+	components, err := cipherB.Open(storeID, "site-b", "customer1")
+	if err != nil {
+		t.Fatalf("Cross-site Open should succeed when verification disabled: %v", err)
+	}
+	if components.Site != "site-a" {
+		t.Errorf("decrypted site should be original: got %q, want site-a", components.Site)
+	}
+}
+
 func TestKeyIDValidation(t *testing.T) {
 	key := make([]byte, 32)
 

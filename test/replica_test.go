@@ -601,3 +601,35 @@ func TestHandleHeartbeat_AcceptsEmptySiteForBackwardsCompat(t *testing.T) {
 		t.Error("expected ack for empty site")
 	}
 }
+
+func TestHandleHeartbeat_AcceptsSiteMismatchWhenVerificationDisabled(t *testing.T) {
+	storeMgr := store.NewManager()
+	hosts := []*routing.Host{
+		{ID: "host1", Address: "localhost:8081", Healthy: true},
+		{ID: "host2", Address: "localhost:8082", Healthy: true},
+	}
+	hasher := routing.NewRendezvousHasher(hosts, "test-secret")
+	config := replica.DefaultConfig("host1", "site-A")
+	config.DisableSiteVerification = true // Disable site verification
+
+	mgr := replica.NewManager(config, storeMgr, hasher)
+	mgr.SetRole(replica.RoleSecondary)
+
+	// Receive heartbeat from peer with different site
+	hb := &replica.HeartbeatMessage{
+		HostID:      "host2",
+		Site:        "site-B", // Different site!
+		LeaderEpoch: 1,
+		Timestamp:   time.Now(),
+	}
+
+	ack, err := mgr.HandleHeartbeat(hb)
+
+	// Should succeed when site verification is disabled
+	if err != nil {
+		t.Errorf("expected no error when site verification disabled, got %v", err)
+	}
+	if ack == nil {
+		t.Error("expected ack when site verification disabled")
+	}
+}
