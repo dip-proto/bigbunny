@@ -1154,17 +1154,7 @@ func runCounterGetCommand(args []string) {
 	defer func() { _ = resp.Body.Close() }()
 
 	checkResponse(resp, "counter-get")
-
-	body, _ := io.ReadAll(resp.Body)
-
-	// Pretty print JSON
-	var result map[string]interface{}
-	if err := json.Unmarshal(body, &result); err == nil {
-		prettyJSON, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Println(string(prettyJSON))
-	} else {
-		fmt.Println(string(body))
-	}
+	printJSONResponse(resp.Body)
 	printWarning(resp)
 }
 
