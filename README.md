@@ -56,6 +56,8 @@ For a complete walkthrough, see the [Quick Start Guide](doc/quickstart.md).
 - **Per-Customer Rate Limiting** — Token bucket algorithm prevents resource exhaustion
 - **Unix Socket API** — Local access with filesystem-based permission control
 
+Choose Big Bunny when your data is ephemeral, small (a few KB), and disposable, and when you want maximum performance with minimal operational complexity rather than long-term persistence, large datasets, or multi-region clustering.
+
 ## Architecture Overview
 
 The architecture is deliberately simple. Two nodes per Point of Presence, with the primary handling writes and the secondary receiving asynchronous updates. When you write to the primary, it responds immediately and then replicates to the secondary in the background.
