@@ -489,13 +489,21 @@ Daemon flags:
   --peers             Comma-separated peer list in format: id@host:port,...
                       Example: node2@localhost:8082,node3@localhost:8083
   --memory-limit      Max memory in bytes (default: 0 = no limit)
+  --customer-memory-quota  Max memory per customer in bytes (default: 0 = no limit)
   --store-keys        Encryption keys (id:hexkey,... or 'dev')
   --store-key-current Current encryption key ID
-  --routing-secret    Routing secret (hex, or 'dev')
+  --routing-secret    Routing secret (32-byte hex, or 'dev')
   --internal-token    Shared secret for internal endpoints
   --dev               Enable dev mode (no auth required)
   --rate-limit        Max requests per second per customer (default: 100, 0 = no limit)
   --burst-size        Burst capacity per customer (default: 200)
+  --tombstone-customer-limit  Max tombstones per customer (default: 0 = no limit)
+  --tombstone-global-limit    Max tombstones globally (default: 0 = no limit)
+  --http-read-timeout         HTTP read timeout (default: 30s)
+  --http-read-header-timeout  HTTP read header timeout (default: 10s)
+  --http-write-timeout        HTTP write timeout (default: 30s)
+  --http-idle-timeout         HTTP idle timeout (default: 120s)
+  --http-max-header-bytes     Max header bytes (default: 1MB)
 
 Environment variables:
   SERIALD_STORE_KEYS        Same as --store-keys
@@ -542,9 +550,11 @@ Counter-create options:
 
 Counter-increment/decrement options:
   --delta             Amount to increment/decrement (default: 1)
+  --ttl               TTL in seconds (0 = keep existing)
 
 Counter-set options:
   --value             Value to set (required)
+  --ttl               TTL in seconds (0 = keep existing)
 
 Examples:
   # Start a single node (dev mode)
@@ -1162,6 +1172,7 @@ func runCounterIncrementCommand(args []string) {
 	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
 	customerID := fs.String("customer", "test-customer", "customer ID")
 	delta := fs.Int64("delta", 1, "amount to increment (default 1)")
+	ttl := fs.Int("ttl", 0, "TTL in seconds (0 = keep existing)")
 	mustParseFlagSet(fs, args)
 
 	remaining := fs.Args()
@@ -1177,6 +1188,9 @@ func runCounterIncrementCommand(args []string) {
 	headers := map[string]string{
 		"X-Customer-ID": *customerID,
 		"Content-Type":  "application/json",
+	}
+	if *ttl > 0 {
+		headers["BigBunny-Not-Valid-After"] = fmt.Sprintf("%d", *ttl)
 	}
 
 	resp, err := doUDSRequestWithHeaders("POST", *udsPath, "/api/v1/increment/"+storeID, strings.NewReader(string(bodyJSON)), headers)
@@ -1206,6 +1220,7 @@ func runCounterDecrementCommand(args []string) {
 	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
 	customerID := fs.String("customer", "test-customer", "customer ID")
 	delta := fs.Int64("delta", 1, "amount to decrement (default 1)")
+	ttl := fs.Int("ttl", 0, "TTL in seconds (0 = keep existing)")
 	mustParseFlagSet(fs, args)
 
 	remaining := fs.Args()
@@ -1221,6 +1236,9 @@ func runCounterDecrementCommand(args []string) {
 	headers := map[string]string{
 		"X-Customer-ID": *customerID,
 		"Content-Type":  "application/json",
+	}
+	if *ttl > 0 {
+		headers["BigBunny-Not-Valid-After"] = fmt.Sprintf("%d", *ttl)
 	}
 
 	resp, err := doUDSRequestWithHeaders("POST", *udsPath, "/api/v1/decrement/"+storeID, strings.NewReader(string(bodyJSON)), headers)
@@ -1250,6 +1268,7 @@ func runCounterSetCommand(args []string) {
 	udsPath := fs.String("uds", "/tmp/bbd.sock", "unix socket path")
 	customerID := fs.String("customer", "test-customer", "customer ID")
 	value := fs.Int64("value", 0, "value to set (required)")
+	ttl := fs.Int("ttl", 0, "TTL in seconds (0 = keep existing)")
 	mustParseFlagSet(fs, args)
 
 	remaining := fs.Args()
@@ -1265,6 +1284,9 @@ func runCounterSetCommand(args []string) {
 	headers := map[string]string{
 		"X-Customer-ID": *customerID,
 		"Content-Type":  "application/json",
+	}
+	if *ttl > 0 {
+		headers["BigBunny-Not-Valid-After"] = fmt.Sprintf("%d", *ttl)
 	}
 
 	resp, err := doUDSRequestWithHeaders("POST", *udsPath, "/api/v1/update/"+storeID, strings.NewReader(string(bodyJSON)), headers)
