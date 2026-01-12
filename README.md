@@ -8,6 +8,8 @@ Big Bunny gives you in-memory storage with microsecond-level latency for reads a
 
 Store IDs are encrypted with AES-256-SIV, which provides both security and customer isolation. TTL management happens automatically—stores expire when their time is up, and the garbage collector cleans them up without you having to think about it.
 
+**[Read the full documentation](doc/index.md)** — Complete guides covering installation, usage, operations, architecture, and security.
+
 ## Quick Start
 
 Build the binary:
@@ -126,8 +128,6 @@ The complete documentation is in the [doc/](doc/) directory:
 - [Operations Guide](doc/operations.md) — Deployment, monitoring, and troubleshooting
 - [Architecture](doc/architecture.md) — How replication, failover, and recovery work
 - [Security](doc/security.md) — Threat analysis and security best practices
-
-Start with the [Documentation Index](doc/index.md) for a complete overview.
 
 ## API at a Glance
 
