@@ -199,7 +199,7 @@ Generate encryption keys with `openssl rand -hex 32` and store them securely. Ne
 
 Big Bunny is fast—write latency is around 100 microseconds, and reads are even faster at about 50 microseconds. Failover takes roughly four seconds from when the primary dies to when the secondary takes over. Stores can be up to 2KB each, and the default TTL is 14 days (though you can configure this per store).
 
-The modify protocol's lock timeout is 500 milliseconds, which means you can do at most two modifications per second per store. Replication lag is typically under 100 milliseconds, so if you write to the primary and immediately read from the secondary, you might see slightly stale data.
+The modify protocol has a 500-millisecond lock timeout—if a client crashes while holding a lock, the lock is automatically released after 500ms to prevent deadlocks. Actual throughput depends on how quickly your client completes the begin-modify → complete-modify cycle; fast clients can achieve much higher rates than the timeout would suggest. Replication lag is typically under 100 milliseconds, so if you write to the primary and immediately read from the secondary, you might see slightly stale data.
 
 See the [Architecture](architecture.md) document for a detailed performance analysis and discussion of the trade-offs.
 
