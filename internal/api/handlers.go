@@ -37,6 +37,30 @@ type Config struct {
 	InternalToken string // Shared secret for internal endpoints (forwarding)
 }
 
+// CreateRequest is the JSON request body for creating stores (optional, backwards compatible).
+// If body is not valid JSON, it's treated as blob data.
+type CreateRequest struct {
+	Type  string  `json:"type"`           // "blob" or "counter"
+	Value *int64  `json:"value"`          // For counter type: initial value
+	Min   *int64  `json:"min,omitempty"`  // For counter type: optional minimum
+	Max   *int64  `json:"max,omitempty"`  // For counter type: optional maximum
+	Data  *string `json:"data,omitempty"` // For blob type: base64-encoded data (optional)
+}
+
+// CounterResponse is returned from counter operations (increment, get).
+type CounterResponse struct {
+	Value   int64  `json:"value"`
+	Version uint64 `json:"version"`
+	Bounded bool   `json:"bounded,omitempty"` // True if increment was clamped
+	Min     *int64 `json:"min,omitempty"`
+	Max     *int64 `json:"max,omitempty"`
+}
+
+// IncrementRequest is the JSON request body for increment/decrement operations.
+type IncrementRequest struct {
+	Delta int64 `json:"delta"`
+}
+
 func DefaultConfig() *Config {
 	return &Config{
 		Site:          "local",
@@ -82,6 +106,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/complete-modify/{storeID}", s.handleCompleteModify)
 	mux.HandleFunc("POST /api/v1/cancel-modify/{storeID}", s.handleCancelModify)
 	mux.HandleFunc("POST /api/v1/update/{storeID}", s.handleUpdate)
+	mux.HandleFunc("POST /api/v1/increment/{storeID}", s.handleIncrement)
+	mux.HandleFunc("POST /api/v1/decrement/{storeID}", s.handleDecrement)
 
 	// Internal API (for replication)
 	mux.HandleFunc("POST /internal/replicate", s.handleReplicate)
@@ -211,6 +237,20 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ttl := s.parseTTLHeader(r)
+	expiresAt := time.Now().Add(ttl)
+
+	// Try to parse as JSON CreateRequest
+	var req CreateRequest
+	isCounter := false
+	if err := json.Unmarshal(body, &req); err == nil && req.Type != "" {
+		if req.Type == "counter" {
+			isCounter = true
+			if req.Value == nil {
+				http.Error(w, "missing value for counter", http.StatusBadRequest)
+				return
+			}
+		}
+	}
 
 	shardID, err := routing.GenerateShardID()
 	if err != nil {
@@ -224,33 +264,57 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	st := &store.Store{
-		ID:          storeID,
-		ShardID:     shardID,
-		CustomerID:  customerID,
-		DataType:    store.DataTypeBlob,
-		Body:        body,
-		ExpiresAt:   time.Now().Add(ttl),
-		Version:     1,
-		LeaderEpoch: s.replica.LeaderEpoch(),
-		Role:        store.RolePrimary,
-	}
+	if isCounter {
+		// Create counter store
+		_, err := s.store.CreateCounter(storeID, shardID, customerID, *req.Value, req.Min, req.Max, expiresAt, s.replica.LeaderEpoch())
+		if err != nil {
+			writeHTTPError(w, err, "failed to create counter")
+			return
+		}
 
-	if err := s.store.Create(st); err != nil {
-		writeHTTPError(w, err, "failed to create store")
-		return
-	}
+		// Replicate counter creation
+		counterData := store.CounterData{Value: *req.Value, Min: req.Min, Max: req.Max}
+		counterBody, _ := json.Marshal(counterData)
+		s.replica.QueueReplication(&replica.ReplicationMessage{
+			Type:       replica.MsgCreateStore,
+			StoreID:    storeID,
+			ShardID:    shardID,
+			CustomerID: customerID,
+			DataType:   uint8(store.DataTypeCounter),
+			Body:       counterBody,
+			ExpiresAt:  expiresAt,
+			Version:    1,
+		})
+	} else {
+		// Create blob store (backwards compatible)
+		st := &store.Store{
+			ID:          storeID,
+			ShardID:     shardID,
+			CustomerID:  customerID,
+			DataType:    store.DataTypeBlob,
+			Body:        body,
+			ExpiresAt:   expiresAt,
+			Version:     1,
+			LeaderEpoch: s.replica.LeaderEpoch(),
+			Role:        store.RolePrimary,
+		}
 
-	s.replica.QueueReplication(&replica.ReplicationMessage{
-		Type:       replica.MsgCreateStore,
-		StoreID:    storeID,
-		ShardID:    shardID,
-		CustomerID: customerID,
-		DataType:   uint8(st.DataType),
-		Body:       body,
-		ExpiresAt:  st.ExpiresAt,
-		Version:    st.Version,
-	})
+		if err := s.store.Create(st); err != nil {
+			writeHTTPError(w, err, "failed to create store")
+			return
+		}
+
+		s.replica.QueueReplication(&replica.ReplicationMessage{
+			Type:       replica.MsgCreateStore,
+			StoreID:    storeID,
+			ShardID:    shardID,
+			CustomerID: customerID,
+			DataType:   uint8(st.DataType),
+			Body:       body,
+			ExpiresAt:  st.ExpiresAt,
+			Version:    st.Version,
+		})
+	}
 
 	w.Header().Set("Content-Type", "text/plain")
 	s.checkDegradedWrite(w)
@@ -362,30 +426,75 @@ func (s *Server) handleCreateByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	st := &store.Store{
-		ID:          storeID,
-		ShardID:     shardID,
-		CustomerID:  customerID,
-		DataType:    store.DataTypeBlob,
-		Body:        body,
-		ExpiresAt:   time.Now().Add(ttl),
-		Version:     1,
-		LeaderEpoch: s.replica.LeaderEpoch(),
-		Role:        store.RolePrimary,
-		PendingName: name,
+	// Detect if this is a counter or blob based on content type and body
+	var st *store.Store
+	contentType := r.Header.Get("Content-Type")
+	if contentType == "application/json" && len(body) > 0 {
+		var createReq CreateRequest
+		if err := json.Unmarshal(body, &createReq); err == nil && createReq.Type == "counter" {
+			// Get initial value (default to 0 if not specified)
+			var initialValue int64
+			if createReq.Value != nil {
+				initialValue = *createReq.Value
+			}
+
+			// Create counter store
+			counterStore, err := s.store.CreateCounter(
+				storeID,
+				shardID,
+				customerID,
+				initialValue,
+				createReq.Min,
+				createReq.Max,
+				time.Now().Add(ttl),
+				s.replica.LeaderEpoch(),
+			)
+			if err != nil {
+				s.abortRegistryReservation(entry)
+				switch err {
+				case store.ErrInvalidBounds:
+					writeErrorWithCode(w, ErrCodeInvalidBounds, "invalid bounds", http.StatusBadRequest)
+				case store.ErrValueOutOfBounds:
+					writeErrorWithCode(w, ErrCodeValueOutOfBounds, "value out of bounds", http.StatusBadRequest)
+				case store.ErrCapacityExceeded:
+					writeErrorWithCode(w, ErrCodeCapacityExceeded, "capacity exceeded", http.StatusInsufficientStorage)
+				default:
+					http.Error(w, "failed to create counter", http.StatusInternalServerError)
+				}
+				return
+			}
+			counterStore.PendingName = name
+			st = counterStore
+		}
 	}
 
-	if err := s.store.Create(st); err != nil {
-		s.abortRegistryReservation(entry)
-		switch err {
-		case store.ErrStoreExists:
-			http.Error(w, "store already exists", http.StatusConflict)
-		case store.ErrCapacityExceeded:
-			writeErrorWithCode(w, ErrCodeCapacityExceeded, "capacity exceeded", http.StatusInsufficientStorage)
-		default:
-			http.Error(w, "failed to create store", http.StatusInternalServerError)
+	// If not a counter, create as blob
+	if st == nil {
+		st = &store.Store{
+			ID:          storeID,
+			ShardID:     shardID,
+			CustomerID:  customerID,
+			DataType:    store.DataTypeBlob,
+			Body:        body,
+			ExpiresAt:   time.Now().Add(ttl),
+			Version:     1,
+			LeaderEpoch: s.replica.LeaderEpoch(),
+			Role:        store.RolePrimary,
+			PendingName: name,
 		}
-		return
+
+		if err := s.store.Create(st); err != nil {
+			s.abortRegistryReservation(entry)
+			switch err {
+			case store.ErrStoreExists:
+				http.Error(w, "store already exists", http.StatusConflict)
+			case store.ErrCapacityExceeded:
+				writeErrorWithCode(w, ErrCodeCapacityExceeded, "capacity exceeded", http.StatusInsufficientStorage)
+			default:
+				http.Error(w, "failed to create store", http.StatusInternalServerError)
+			}
+			return
+		}
 	}
 
 	s.replica.QueueReplication(&replica.ReplicationMessage{
@@ -667,8 +776,32 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ttlRemaining := max(time.Until(st.ExpiresAt).Seconds(), 0)
-
 	w.Header().Set("BigBunny-Not-Valid-After", strconv.FormatInt(int64(ttlRemaining), 10))
+
+	// Handle counter stores with JSON response
+	if st.DataType == store.DataTypeCounter {
+		counterData, version, err := s.store.GetCounter(storeID, customerID)
+		if err != nil {
+			writeHTTPError(w, err, "failed to get counter")
+			return
+		}
+
+		resp := CounterResponse{
+			Value:   counterData.Value,
+			Version: version,
+			Min:     counterData.Min,
+			Max:     counterData.Max,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			log.Printf("error writing response body: %v", err)
+		}
+		return
+	}
+
+	// Handle blob stores with raw body
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write(st.Body); err != nil {
@@ -853,6 +986,48 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if this is a counter store and handle accordingly
+	st, getErr := s.store.Get(storeID, customerID)
+	if getErr != nil {
+		writeHTTPError(w, getErr, "failed to get store")
+		return
+	}
+
+	if st.DataType == store.DataTypeCounter {
+		// For counters, expect JSON with {"value": N}
+		var req struct {
+			Value int64 `json:"value"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			http.Error(w, "invalid JSON for counter update", http.StatusBadRequest)
+			return
+		}
+
+		version, err := s.store.SetCounter(storeID, customerID, req.Value)
+		if err != nil {
+			writeHTTPError(w, err, "failed to set counter")
+			return
+		}
+
+		// Get updated counter data for replication
+		updatedSt, _ := s.store.Get(storeID, customerID)
+		s.replica.QueueReplication(&replica.ReplicationMessage{
+			Type:       replica.MsgUpdateStore,
+			StoreID:    storeID,
+			ShardID:    shardID,
+			CustomerID: customerID,
+			DataType:   uint8(updatedSt.DataType),
+			Body:       updatedSt.Body,
+			ExpiresAt:  updatedSt.ExpiresAt,
+			Version:    version,
+		})
+
+		s.checkDegradedWrite(w)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// For blob stores, use the lock mechanism
 	lockID, err := routing.GenerateLockID()
 	if err != nil {
 		http.Error(w, "failed to generate lock ID", http.StatusInternalServerError)
@@ -1423,4 +1598,144 @@ func (s *Server) handleRegistryDelete(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) handleIncrement(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePrimary(w, r) {
+		return
+	}
+
+	customerID, ok := s.requireCustomerID(w, r)
+	if !ok {
+		return
+	}
+
+	storeID := strings.TrimSpace(r.PathValue("storeID"))
+	if storeID == "" {
+		http.Error(w, "missing store ID", http.StatusBadRequest)
+		return
+	}
+
+	// Validate store ID belongs to customer
+	_, ok = s.parseStoreIDWithShard(w, storeID, customerID)
+	if !ok {
+		return
+	}
+
+	// Parse increment request
+	body, ok := s.readLimitedBody(w, r)
+	if !ok {
+		return
+	}
+
+	var req IncrementRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "invalid JSON request", http.StatusBadRequest)
+		return
+	}
+
+	// Perform atomic increment
+	result, err := s.store.Increment(storeID, customerID, req.Delta, s.replica.LeaderEpoch())
+	if err != nil {
+		writeHTTPError(w, err, "failed to increment counter")
+		return
+	}
+
+	// Queue replication of updated counter state (result contains all needed fields)
+	s.replica.QueueReplication(&replica.ReplicationMessage{
+		Type:       replica.MsgUpdateStore,
+		StoreID:    storeID,
+		ShardID:    result.ShardID,
+		CustomerID: customerID,
+		DataType:   uint8(store.DataTypeCounter),
+		Body:       result.Body,
+		ExpiresAt:  result.ExpiresAt,
+		Version:    result.Version,
+	})
+
+	// Return counter result (result contains all needed fields)
+	resp := CounterResponse{
+		Value:   result.Value,
+		Version: result.Version,
+		Bounded: result.Bounded,
+		Min:     result.Min,
+		Max:     result.Max,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	s.checkDegradedWrite(w)
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("error writing response body: %v", err)
+	}
+}
+
+func (s *Server) handleDecrement(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePrimary(w, r) {
+		return
+	}
+
+	customerID, ok := s.requireCustomerID(w, r)
+	if !ok {
+		return
+	}
+
+	storeID := strings.TrimSpace(r.PathValue("storeID"))
+	if storeID == "" {
+		http.Error(w, "missing store ID", http.StatusBadRequest)
+		return
+	}
+
+	// Validate store ID belongs to customer
+	_, ok = s.parseStoreIDWithShard(w, storeID, customerID)
+	if !ok {
+		return
+	}
+
+	// Parse decrement request
+	body, ok := s.readLimitedBody(w, r)
+	if !ok {
+		return
+	}
+
+	var req IncrementRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "invalid JSON request", http.StatusBadRequest)
+		return
+	}
+
+	// Decrement is just increment with negative delta
+	result, err := s.store.Increment(storeID, customerID, -req.Delta, s.replica.LeaderEpoch())
+	if err != nil {
+		writeHTTPError(w, err, "failed to decrement counter")
+		return
+	}
+
+	// Queue replication of updated counter state (result contains all needed fields)
+	s.replica.QueueReplication(&replica.ReplicationMessage{
+		Type:       replica.MsgUpdateStore,
+		StoreID:    storeID,
+		ShardID:    result.ShardID,
+		CustomerID: customerID,
+		DataType:   uint8(store.DataTypeCounter),
+		Body:       result.Body,
+		ExpiresAt:  result.ExpiresAt,
+		Version:    result.Version,
+	})
+
+	// Return counter result (result contains all needed fields)
+	resp := CounterResponse{
+		Value:   result.Value,
+		Version: result.Version,
+		Bounded: result.Bounded,
+		Min:     result.Min,
+		Max:     result.Max,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	s.checkDegradedWrite(w)
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("error writing response body: %v", err)
+	}
 }

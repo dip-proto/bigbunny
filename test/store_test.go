@@ -557,3 +557,304 @@ func TestStoreResetUpdatesMemoryUsage(t *testing.T) {
 		t.Errorf("expected memory to decrease after reset: before=%d, after=%d", initialMemory, newMemory)
 	}
 }
+
+func TestCounterCreateAndIncrement(t *testing.T) {
+	mgr := store.NewManager()
+	initialValue := int64(10)
+
+	s, err := mgr.CreateCounter("counter1", "shard1", "cust1", initialValue, nil, nil, time.Now().Add(time.Hour), 1)
+	if err != nil {
+		t.Fatalf("create counter failed: %v", err)
+	}
+
+	if s.DataType != store.DataTypeCounter {
+		t.Errorf("expected counter type, got %s", s.DataType)
+	}
+
+	// Increment by 5
+	result, err := mgr.Increment("counter1", "cust1", 5, 1)
+	if err != nil {
+		t.Fatalf("increment failed: %v", err)
+	}
+	if result.Value != 15 {
+		t.Errorf("expected value 15, got %d", result.Value)
+	}
+	if result.Bounded {
+		t.Error("expected bounded=false for unbounded counter")
+	}
+
+	// Verify version incremented
+	if result.Version != 2 {
+		t.Errorf("expected version 2, got %d", result.Version)
+	}
+
+	// Decrement (negative delta)
+	result, err = mgr.Increment("counter1", "cust1", -3, 1)
+	if err != nil {
+		t.Fatalf("decrement failed: %v", err)
+	}
+	if result.Value != 12 {
+		t.Errorf("expected value 12, got %d", result.Value)
+	}
+}
+
+func TestCounterWithBounds(t *testing.T) {
+	mgr := store.NewManager()
+	min := int64(0)
+	max := int64(100)
+
+	_, err := mgr.CreateCounter("counter1", "shard1", "cust1", 50, &min, &max, time.Now().Add(time.Hour), 1)
+	if err != nil {
+		t.Fatalf("create counter failed: %v", err)
+	}
+
+	// Increment within bounds
+	result, err := mgr.Increment("counter1", "cust1", 30, 1)
+	if err != nil {
+		t.Fatalf("increment failed: %v", err)
+	}
+	if result.Value != 80 || result.Bounded {
+		t.Errorf("expected value 80, bounded=false; got %d, %v", result.Value, result.Bounded)
+	}
+
+	// Increment beyond max - should clamp to 100
+	result, err = mgr.Increment("counter1", "cust1", 50, 1)
+	if err != nil {
+		t.Fatalf("increment failed: %v", err)
+	}
+	if result.Value != 100 {
+		t.Errorf("expected value clamped to 100, got %d", result.Value)
+	}
+	if !result.Bounded {
+		t.Error("expected bounded=true when hitting max")
+	}
+
+	// Decrement below min - should clamp to 0
+	result, err = mgr.Increment("counter1", "cust1", -150, 1)
+	if err != nil {
+		t.Fatalf("decrement failed: %v", err)
+	}
+	if result.Value != 0 {
+		t.Errorf("expected value clamped to 0, got %d", result.Value)
+	}
+	if !result.Bounded {
+		t.Error("expected bounded=true when hitting min")
+	}
+}
+
+func TestCounterInvalidBounds(t *testing.T) {
+	mgr := store.NewManager()
+	min := int64(100)
+	max := int64(0) // min > max - invalid!
+
+	_, err := mgr.CreateCounter("counter1", "shard1", "cust1", 50, &min, &max, time.Now().Add(time.Hour), 1)
+	if err != store.ErrInvalidBounds {
+		t.Errorf("expected ErrInvalidBounds, got %v", err)
+	}
+}
+
+func TestCounterInitialValueOutOfBounds(t *testing.T) {
+	mgr := store.NewManager()
+	min := int64(10)
+	max := int64(100)
+
+	// Initial value below min
+	_, err := mgr.CreateCounter("counter1", "shard1", "cust1", 5, &min, &max, time.Now().Add(time.Hour), 1)
+	if err != store.ErrValueOutOfBounds {
+		t.Errorf("expected ErrValueOutOfBounds for value < min, got %v", err)
+	}
+
+	// Initial value above max
+	_, err = mgr.CreateCounter("counter2", "shard1", "cust1", 150, &min, &max, time.Now().Add(time.Hour), 1)
+	if err != store.ErrValueOutOfBounds {
+		t.Errorf("expected ErrValueOutOfBounds for value > max, got %v", err)
+	}
+}
+
+func TestCounterOverflow(t *testing.T) {
+	mgr := store.NewManager()
+	initial := int64(9223372036854775800) // Near MaxInt64
+
+	_, err := mgr.CreateCounter("counter1", "shard1", "cust1", initial, nil, nil, time.Now().Add(time.Hour), 1)
+	if err != nil {
+		t.Fatalf("create counter failed: %v", err)
+	}
+
+	// Try to increment beyond MaxInt64
+	_, err = mgr.Increment("counter1", "cust1", 1000, 1)
+	if err != store.ErrOverflow {
+		t.Errorf("expected ErrOverflow, got %v", err)
+	}
+}
+
+func TestCounterUnderflow(t *testing.T) {
+	mgr := store.NewManager()
+	initial := int64(-9223372036854775800) // Near MinInt64
+
+	_, err := mgr.CreateCounter("counter1", "shard1", "cust1", initial, nil, nil, time.Now().Add(time.Hour), 1)
+	if err != nil {
+		t.Fatalf("create counter failed: %v", err)
+	}
+
+	// Try to decrement beyond MinInt64
+	_, err = mgr.Increment("counter1", "cust1", -1000, 1)
+	if err != store.ErrOverflow {
+		t.Errorf("expected ErrOverflow, got %v", err)
+	}
+}
+
+func TestCounterTypeMismatch(t *testing.T) {
+	mgr := store.NewManager()
+
+	// Create a blob store
+	blob := &store.Store{
+		ID:         "blob1",
+		CustomerID: "cust1",
+		DataType:   store.DataTypeBlob,
+		Body:       []byte("not a counter"),
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}
+	mgr.Create(blob)
+
+	// Try to increment blob store
+	_, err := mgr.Increment("blob1", "cust1", 5, 1)
+	if err != store.ErrTypeMismatch {
+		t.Errorf("expected ErrTypeMismatch, got %v", err)
+	}
+}
+
+func TestCounterLockedStore(t *testing.T) {
+	mgr := store.NewManager()
+
+	_, err := mgr.CreateCounter("counter1", "shard1", "cust1", 10, nil, nil, time.Now().Add(time.Hour), 1)
+	if err != nil {
+		t.Fatalf("create counter failed: %v", err)
+	}
+
+	// Acquire lock on the counter
+	_, err = mgr.AcquireLock("counter1", "cust1", "lock1", 500*time.Millisecond)
+	if err != nil {
+		t.Fatalf("acquire lock failed: %v", err)
+	}
+
+	// Try to increment locked counter - should fail
+	_, err = mgr.Increment("counter1", "cust1", 5, 1)
+	if err != store.ErrStoreLocked {
+		t.Errorf("expected ErrStoreLocked, got %v", err)
+	}
+
+	// Release lock
+	mgr.ReleaseLock("counter1", "cust1", "lock1")
+
+	// Now increment should work
+	result, err := mgr.Increment("counter1", "cust1", 5, 1)
+	if err != nil {
+		t.Fatalf("increment after unlock failed: %v", err)
+	}
+	if result.Value != 15 {
+		t.Errorf("expected value 15, got %d", result.Value)
+	}
+}
+
+func TestCounterGetCounter(t *testing.T) {
+	mgr := store.NewManager()
+	min := int64(0)
+	max := int64(100)
+
+	_, err := mgr.CreateCounter("counter1", "shard1", "cust1", 42, &min, &max, time.Now().Add(time.Hour), 1)
+	if err != nil {
+		t.Fatalf("create counter failed: %v", err)
+	}
+
+	data, version, err := mgr.GetCounter("counter1", "cust1")
+	if err != nil {
+		t.Fatalf("get counter failed: %v", err)
+	}
+
+	if data.Value != 42 {
+		t.Errorf("expected value 42, got %d", data.Value)
+	}
+	if data.Min == nil || *data.Min != 0 {
+		t.Errorf("expected min=0, got %v", data.Min)
+	}
+	if data.Max == nil || *data.Max != 100 {
+		t.Errorf("expected max=100, got %v", data.Max)
+	}
+	if version != 1 {
+		t.Errorf("expected version 1, got %d", version)
+	}
+}
+
+func TestCounterSetCounter(t *testing.T) {
+	mgr := store.NewManager()
+	min := int64(0)
+	max := int64(100)
+
+	_, err := mgr.CreateCounter("counter1", "shard1", "cust1", 50, &min, &max, time.Now().Add(time.Hour), 1)
+	if err != nil {
+		t.Fatalf("create counter failed: %v", err)
+	}
+
+	// Set to valid value
+	version, err := mgr.SetCounter("counter1", "cust1", 75)
+	if err != nil {
+		t.Fatalf("set counter failed: %v", err)
+	}
+	if version != 2 {
+		t.Errorf("expected version 2, got %d", version)
+	}
+
+	// Verify value changed
+	data, _, err := mgr.GetCounter("counter1", "cust1")
+	if err != nil {
+		t.Fatalf("get counter failed: %v", err)
+	}
+	if data.Value != 75 {
+		t.Errorf("expected value 75, got %d", data.Value)
+	}
+
+	// Try to set out of bounds
+	_, err = mgr.SetCounter("counter1", "cust1", 150)
+	if err != store.ErrValueOutOfBounds {
+		t.Errorf("expected ErrValueOutOfBounds, got %v", err)
+	}
+
+	_, err = mgr.SetCounter("counter1", "cust1", -10)
+	if err != store.ErrValueOutOfBounds {
+		t.Errorf("expected ErrValueOutOfBounds, got %v", err)
+	}
+}
+
+func TestCounterConcurrentIncrements(t *testing.T) {
+	mgr := store.NewManager()
+
+	_, err := mgr.CreateCounter("counter1", "shard1", "cust1", 0, nil, nil, time.Now().Add(time.Hour), 1)
+	if err != nil {
+		t.Fatalf("create counter failed: %v", err)
+	}
+
+	// Launch 10 goroutines, each incrementing by 10
+	done := make(chan bool)
+	for i := 0; i < 10; i++ {
+		go func() {
+			for j := 0; j < 10; j++ {
+				mgr.Increment("counter1", "cust1", 1, 1)
+			}
+			done <- true
+		}()
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+
+	// Verify final value is 100 (10 goroutines * 10 increments)
+	data, _, err := mgr.GetCounter("counter1", "cust1")
+	if err != nil {
+		t.Fatalf("get counter failed: %v", err)
+	}
+	if data.Value != 100 {
+		t.Errorf("expected value 100 from concurrent increments, got %d", data.Value)
+	}
+}

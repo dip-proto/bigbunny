@@ -1,6 +1,8 @@
 package store
 
 import (
+	"encoding/json"
+	"math"
 	"sync"
 	"time"
 )
@@ -16,12 +18,15 @@ type DataType uint8
 
 const (
 	DataTypeBlob DataType = iota
+	DataTypeCounter
 )
 
 func (d DataType) String() string {
 	switch d {
 	case DataTypeBlob:
 		return "blob"
+	case DataTypeCounter:
+		return "counter"
 	default:
 		return "unknown"
 	}
@@ -71,6 +76,29 @@ type Store struct {
 
 func (s *Store) IsExpired() bool {
 	return !s.ExpiresAt.IsZero() && time.Now().After(s.ExpiresAt)
+}
+
+// CounterData represents the data stored in a counter-type store.
+// Min and Max define optional bounds. When nil, the counter is unbounded in that direction.
+// Bounds are immutable after creation.
+type CounterData struct {
+	Value int64  `json:"value"`
+	Min   *int64 `json:"min,omitempty"`
+	Max   *int64 `json:"max,omitempty"`
+}
+
+// CounterResult is returned from increment operations.
+type CounterResult struct {
+	Value   int64  // New counter value after operation
+	Version uint64 // New version number
+	Bounded bool   // True if the operation was clamped by min/max bounds
+	Min     *int64 // Minimum bound (nil if unbounded)
+	Max     *int64 // Maximum bound (nil if unbounded)
+	// Fields needed for replication
+	ShardID    string
+	ExpiresAt  time.Time
+	Body       []byte // Serialized counter data
+	LeaderEpoch uint64
 }
 
 const storeOverhead = 256 // estimated per-store metadata overhead in bytes
@@ -629,4 +657,217 @@ func (m *Manager) Reset(stores []*Store) {
 		}
 		m.customerIndex[s.CustomerID][s.ID] = struct{}{}
 	}
+}
+
+// CreateCounter creates a new counter store with the given initial value and optional bounds.
+// Validates that min <= max if both bounds are provided.
+// Returns the created store on success.
+func (m *Manager) CreateCounter(id, shardID, customerID string, initialValue int64, min, max *int64, expiresAt time.Time, leaderEpoch uint64) (*Store, error) {
+	// Validate bounds
+	if min != nil && max != nil && *min > *max {
+		return nil, ErrInvalidBounds
+	}
+	if min != nil && initialValue < *min {
+		return nil, ErrValueOutOfBounds
+	}
+	if max != nil && initialValue > *max {
+		return nil, ErrValueOutOfBounds
+	}
+
+	// Serialize counter data
+	counterData := CounterData{
+		Value: initialValue,
+		Min:   min,
+		Max:   max,
+	}
+	body, err := json.Marshal(counterData)
+	if err != nil {
+		return nil, err
+	}
+
+	store := &Store{
+		ID:          id,
+		ShardID:     shardID,
+		CustomerID:  customerID,
+		DataType:    DataTypeCounter,
+		Body:        body,
+		ExpiresAt:   expiresAt,
+		LeaderEpoch: leaderEpoch,
+		Role:        RolePrimary,
+	}
+
+	if err := m.Create(store); err != nil {
+		return nil, err
+	}
+
+	return store.Copy(), nil
+}
+
+// Increment atomically increments a counter by delta and returns the new value.
+// This operation:
+// - Validates the store is a counter type
+// - Checks the store is not locked (fails with ErrStoreLocked)
+// - Detects integer overflow/underflow (fails with ErrOverflow)
+// - Clamps to bounds if present (sets Bounded=true in result)
+// - Increments the version and queues replication
+//
+// The operation is atomic and thread-safe without exposing locks to the client.
+func (m *Manager) Increment(storeID, customerID string, delta int64, leaderEpoch uint64) (*CounterResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, exists := m.stores[storeID]
+	if !exists {
+		return nil, ErrStoreNotFound
+	}
+	if s.CustomerID != customerID {
+		return nil, ErrUnauthorized
+	}
+	if s.IsExpired() {
+		return nil, ErrStoreExpired
+	}
+	if s.DataType != DataTypeCounter {
+		return nil, ErrTypeMismatch
+	}
+	if s.Lock != nil && !s.Lock.IsExpired() {
+		return nil, ErrStoreLocked
+	}
+
+	// Deserialize current counter data
+	var counterData CounterData
+	if err := json.Unmarshal(s.Body, &counterData); err != nil {
+		return nil, err
+	}
+
+	// Check for overflow/underflow before applying delta
+	if delta > 0 {
+		if counterData.Value > math.MaxInt64-delta {
+			return nil, ErrOverflow
+		}
+	} else if delta < 0 {
+		if counterData.Value < math.MinInt64-delta {
+			return nil, ErrOverflow
+		}
+	}
+
+	// Apply delta
+	newValue := counterData.Value + delta
+	bounded := false
+
+	// Apply bounds
+	if counterData.Min != nil && newValue < *counterData.Min {
+		newValue = *counterData.Min
+		bounded = true
+	}
+	if counterData.Max != nil && newValue > *counterData.Max {
+		newValue = *counterData.Max
+		bounded = true
+	}
+
+	// Update counter data
+	counterData.Value = newValue
+	newBody, err := json.Marshal(counterData)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update store
+	oldSize := storeSize(s)
+	s.Body = newBody
+	s.Version++
+	s.LeaderEpoch = leaderEpoch
+	newSize := storeSize(s)
+	m.usedBytes += newSize - oldSize
+
+	return &CounterResult{
+		Value:       newValue,
+		Version:     s.Version,
+		Bounded:     bounded,
+		Min:         counterData.Min,
+		Max:         counterData.Max,
+		ShardID:     s.ShardID,
+		ExpiresAt:   s.ExpiresAt,
+		Body:        newBody,
+		LeaderEpoch: leaderEpoch,
+	}, nil
+}
+
+// GetCounter retrieves counter data from a store.
+// Returns ErrTypeMismatch if the store is not a counter.
+func (m *Manager) GetCounter(storeID, customerID string) (*CounterData, uint64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	s, exists := m.stores[storeID]
+	if !exists {
+		return nil, 0, ErrStoreNotFound
+	}
+	if s.CustomerID != customerID {
+		return nil, 0, ErrUnauthorized
+	}
+	if s.IsExpired() {
+		return nil, 0, ErrStoreExpired
+	}
+	if s.DataType != DataTypeCounter {
+		return nil, 0, ErrTypeMismatch
+	}
+
+	var counterData CounterData
+	if err := json.Unmarshal(s.Body, &counterData); err != nil {
+		return nil, 0, err
+	}
+
+	return &counterData, s.Version, nil
+}
+
+// SetCounter sets a counter to a specific value.
+// Validates the value is within bounds if present.
+// Returns ErrTypeMismatch if the store is not a counter.
+func (m *Manager) SetCounter(storeID, customerID string, value int64) (uint64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, exists := m.stores[storeID]
+	if !exists {
+		return 0, ErrStoreNotFound
+	}
+	if s.CustomerID != customerID {
+		return 0, ErrUnauthorized
+	}
+	if s.IsExpired() {
+		return 0, ErrStoreExpired
+	}
+	if s.DataType != DataTypeCounter {
+		return 0, ErrTypeMismatch
+	}
+
+	// Deserialize current counter data to get bounds
+	var counterData CounterData
+	if err := json.Unmarshal(s.Body, &counterData); err != nil {
+		return 0, err
+	}
+
+	// Validate value is within bounds
+	if counterData.Min != nil && value < *counterData.Min {
+		return 0, ErrValueOutOfBounds
+	}
+	if counterData.Max != nil && value > *counterData.Max {
+		return 0, ErrValueOutOfBounds
+	}
+
+	// Update counter value
+	counterData.Value = value
+	newBody, err := json.Marshal(counterData)
+	if err != nil {
+		return 0, err
+	}
+
+	// Update store
+	oldSize := storeSize(s)
+	s.Body = newBody
+	s.Version++
+	newSize := storeSize(s)
+	m.usedBytes += newSize - oldSize
+
+	return s.Version, nil
 }
