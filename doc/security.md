@@ -148,6 +148,7 @@ Here's a summary of the risk levels:
 | Store ID forgery       | None     | Yes (AES-SIV authentication)     |
 | Store ID tampering     | None     | Yes (SIV tag + AAD)              |
 | Cross-customer access  | None     | Yes (per-customer keys + AAD)    |
+| Cross-site access      | None     | Yes (site in key derivation)     |
 | Within-customer replay | Low      | Partial (by design for retries)  |
 | Cross-customer replay  | None     | Yes (key derivation + AAD)       |
 | Targeted host overload | None     | Yes (routing secret)             |
