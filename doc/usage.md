@@ -56,7 +56,7 @@ This prints the store contents to stdout. It's fast because everything is in mem
 If you want to see how much time the store has left before expiring, add `--ttl`:
 
 ```bash
-./bbd get v1:0:8ahePLwi... -ttl
+./bbd get -ttl v1:0:8ahePLwi...
 ```
 
 This shows both the contents and the remaining TTL in seconds.
