@@ -1219,7 +1219,7 @@ func runCounterSetCommand(args []string) {
 	}
 	storeID := remaining[0]
 
-	reqBody := map[string]interface{}{"value": *value}
+	reqBody := map[string]any{"value": *value}
 	bodyJSON, _ := json.Marshal(reqBody)
 
 	headers := map[string]string{
