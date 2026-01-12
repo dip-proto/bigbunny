@@ -34,7 +34,7 @@ These documents explain the internals and design decisions behind Big Bunny.
 
 **[Architecture](architecture.md)** is a deep dive into how Big Bunny works under the hood. We cover the replication model, lease-based failover, epoch fencing, lock-based serialization, and the recovery protocol. If you want to understand why Big Bunny behaves the way it does, or you're curious about the trade-offs between consistency and availability, this is the document for you.
 
-**[Security](security.md)** explains the security model from top to bottom. You'll learn how store ID encryption works with AES-256-SIV, how per-customer key derivation provides cryptographic isolation, and how to manage encryption keys safely. The document also includes a threat analysis covering various attack scenarios and explains what Big Bunny protects against (and what it doesn't).
+**[Security](security.md)** explains the security model from top to bottom. You'll learn how store ID encryption works with AES-128-SIV, how per-customer key derivation provides cryptographic isolation, and how to manage encryption keys safely. The document also includes a threat analysis covering various attack scenarios and explains what Big Bunny protects against (and what it doesn't).
 
 ## Quick Navigation
 
@@ -73,7 +73,7 @@ When you're deploying Big Bunny for real, these sections have what you need:
 
 Big Bunny gives you in-memory storage with microsecond-level latency for reads and writes. The lock-based modify protocol prevents race conditions when you need to read, change, and write back data. If a host fails, the secondary automatically takes over within about four seconds, so your application stays available even when hardware dies.
 
-Store IDs are encrypted with AES-256-SIV, which provides both security and customer isolation. Even if someone gets another customer's store ID, they can't decrypt it because each customer's stores are encrypted with a different derived key. Named stores give you the option of using human-readable names instead of opaque encrypted IDs when that makes sense.
+Store IDs are encrypted with AES-128-SIV, which provides both security and customer isolation. Even if someone gets another customer's store ID, they can't decrypt it because each customer's stores are encrypted with a different derived key. Named stores give you the option of using human-readable names instead of opaque encrypted IDs when that makes sense.
 
 TTL management happens automatically—stores expire when their time is up, and the garbage collector cleans them up without you having to think about it. You can configure memory limits to control how much RAM each node uses, and Big Bunny will reject new stores once the limit is reached rather than crashing.
 
@@ -202,7 +202,7 @@ See the [Architecture](architecture.md) document for a detailed performance anal
 
 ## Security Overview
 
-Big Bunny uses AES-256-SIV to encrypt store IDs, with per-customer key derivation via HKDF. This provides both tamper protection and cryptographic isolation between customers. Even with a bug in the routing logic, customers can't access each other's data because they literally can't decrypt the store IDs.
+Big Bunny uses AES-128-SIV to encrypt store IDs, with per-customer key derivation via HKDF. This provides both tamper protection and cryptographic isolation between customers. Even with a bug in the routing logic, customers can't access each other's data because they literally can't decrypt the store IDs.
 
 Internal replication endpoints require authentication via a shared token, though the current implementation doesn't encrypt the traffic (you should run on a trusted private network). The Unix socket's file permissions control who can access the local API.
 

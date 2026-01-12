@@ -41,7 +41,7 @@ You should see usage information listing all the available commands and flags.
 
 Big Bunny needs encryption keys to secure store IDs and an internal token to authenticate replication traffic between nodes. During development, you can use the `--dev` flag to skip this configuration and use weak, deterministic keys. This is convenient for testing but completely insecure, so never use it in production.
 
-For production, you'll need to generate real encryption keys and an internal authentication token. The encryption keys should be 32 bytes (256 bits) of random data, typically represented as 64 hexadecimal characters. You can generate these with OpenSSL:
+For production, you'll need to generate real encryption keys and an internal authentication token. The encryption keys should be 32 bytes of random data (required for AES-128-SIV), typically represented as 64 hexadecimal characters. You can generate these with OpenSSL:
 
 ```bash
 openssl rand -hex 32
@@ -69,7 +69,7 @@ Development mode is convenient, but don't ever use it in production. The encrypt
 
 ### Production Configuration
 
-In production, you need to provide your own encryption keys and internal authentication token. Start by generating a strong encryption key. This is just a 32-byte random value, which you'll represent as 64 hexadecimal characters.
+In production, you need to provide your own encryption keys and internal authentication token. Start by generating a strong encryption key. This is just a 32-byte random value (required for AES-128-SIV), which you'll represent as 64 hexadecimal characters.
 
 ```bash
 openssl rand -hex 32
@@ -122,7 +122,7 @@ On the second node, you'd use nearly identical configuration, just swapping the 
 
 ### Key Generation
 
-Before you can run Big Bunny in production, you need to generate encryption keys. These keys protect store IDs from tampering and ensure customer isolation. Each key is 32 bytes (256 bits) of random data, expressed as 64 hexadecimal characters.
+Before you can run Big Bunny in production, you need to generate encryption keys. These keys protect store IDs from tampering and ensure customer isolation. Each key is 32 bytes of random data (required for AES-128-SIV), expressed as 64 hexadecimal characters.
 
 Generate a key using OpenSSL:
 
@@ -164,7 +164,7 @@ This produces a `bbd` binary in your current directory. If you don't have `make`
 go build ./cmd/bbd
 ```
 
-For production deployments, you'll need to generate encryption keys. These are 32-byte (256-bit) values used for encrypting store IDs. Generate them with OpenSSL:
+For production deployments, you'll need to generate encryption keys. These are 32-byte values (required for AES-128-SIV) used for encrypting store IDs. Generate them with OpenSSL:
 
 ```bash
 openssl rand -hex 32

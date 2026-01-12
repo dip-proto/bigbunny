@@ -82,7 +82,7 @@ After 500 milliseconds, any lock that existed on the old primary has definitely 
 
 When Big Bunny creates a store, it generates an encrypted identifier that clients use to reference that store in future operations. This encryption serves multiple purposes beyond just security.
 
-The encryption algorithm is AES-256-SIV, which stands for Synthetic Initialization Vector. This is a special variant of AES that's designed for deterministic encryption. Big Bunny doesn't use a nonce at all (AES-SIV makes the nonce optional), which simplifies the implementation and makes the encryption deterministic: encrypting the same store ID plaintext with the same customer key always produces the same ciphertext.
+The encryption algorithm is AES-128-SIV, which stands for Synthetic Initialization Vector. This is a special variant of AES that's designed for deterministic encryption. Big Bunny doesn't use a nonce at all (AES-SIV makes the nonce optional), which simplifies the implementation and makes the encryption deterministic: encrypting the same store ID plaintext with the same customer key always produces the same ciphertext.
 
 Why does this matter for Big Bunny? Because each customer gets their own encryption key derived from the master key using HKDF (a key derivation function). The derivation formula incorporates the customer ID, so customer A and customer B get completely different keys even though they share the same master key. This provides cryptographic isolation—customer A literally cannot decrypt customer B's store IDs, even if they try.
 

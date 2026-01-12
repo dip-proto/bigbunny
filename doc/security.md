@@ -18,7 +18,7 @@ The security goals flow from this trust model. Customer isolation is paramount�
 
 When Big Bunny creates a store, it generates an encrypted identifier that clients use to reference that store. The encryption isn't just about security—it also enables customer isolation and prevents tampering.
 
-The algorithm is AES-256-SIV, which stands for Synthetic Initialization Vector. This variant of AES is designed for deterministic encryption—it doesn't require a nonce at all. Big Bunny doesn't use a nonce, which simplifies the implementation and makes the encryption deterministic: encrypting the same store ID plaintext with the same customer key always produces the same ciphertext. This deterministic property is exactly what Big Bunny needs because each customer gets their own encryption key derived from the master key, and the derivation needs to be deterministic and repeatable.
+The algorithm is AES-128-SIV, which stands for Synthetic Initialization Vector. This variant of AES is designed for deterministic encryption—it doesn't require a nonce at all. Big Bunny doesn't use a nonce, which simplifies the implementation and makes the encryption deterministic: encrypting the same store ID plaintext with the same customer key always produces the same ciphertext. This deterministic property is exactly what Big Bunny needs because each customer gets their own encryption key derived from the master key, and the derivation needs to be deterministic and repeatable.
 
 Here's how it works. When you start Big Bunny, you provide a master encryption key. This is a 32-byte random value that all nodes in your cluster share. For each customer, Big Bunny derives a unique encryption key using HKDF (a key derivation function) with the customer ID as input. So customer A and customer B get completely different encryption keys, even though they share the same master key.
 
@@ -34,7 +34,7 @@ There's also Associated Authenticated Data (AAD) included in the encryption. The
 
 The master encryption keys are the crown jewels of your Big Bunny deployment. If someone gets these keys, they can decrypt all store IDs and potentially access data they shouldn't. Treat them accordingly.
 
-Generate keys using a cryptographically secure random number generator. On most systems, `openssl rand -hex 32` works perfectly. This gives you 32 bytes (256 bits) of random data, represented as 64 hexadecimal characters. That's your master key.
+Generate keys using a cryptographically secure random number generator. On most systems, `openssl rand -hex 32` works perfectly. This gives you 32 bytes of random data (required for AES-128-SIV), represented as 64 hexadecimal characters. That's your master key.
 
 Store keys securely. Don't put them in Git repositories. Don't leave them in shell history. Don't log them. Use a secrets management system like HashiCorp Vault or AWS Secrets Manager if you have one. If not, at minimum, store them in files with restrictive permissions (mode 0600, readable only by the Big Bunny user).
 

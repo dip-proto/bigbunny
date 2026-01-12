@@ -6,7 +6,7 @@ A fast, in-memory session store built for edge computing. If you're running appl
 
 Big Bunny gives you in-memory storage with microsecond-level latency for reads and writes. The lock-based modify protocol prevents race conditions when you need to read, change, and write back data. If a host fails, the secondary automatically takes over within about four seconds, so your application stays available even when hardware dies.
 
-Store IDs are encrypted with AES-256-SIV, which provides both security and customer isolation. TTL management happens automatically—stores expire when their time is up, and the garbage collector cleans them up without you having to think about it.
+Store IDs are encrypted with AES-128-SIV, which provides both security and customer isolation. TTL management happens automatically—stores expire when their time is up, and the garbage collector cleans them up without you having to think about it.
 
 **[Read the full documentation](doc/index.md)** — Complete guides covering installation, usage, operations, architecture, and security.
 
@@ -49,7 +49,7 @@ For a complete walkthrough, see the [Quick Start Guide](doc/quickstart.md).
 - **In-Memory Storage** — Microsecond-level read/write latency
 - **Lock-Based Serialization** — Prevents race conditions for read-modify-write operations
 - **Automatic Failover** — Two-node replication with ~4 second failover time
-- **Encrypted Store IDs** — AES-256-SIV encryption provides security and customer isolation
+- **Encrypted Store IDs** — AES-128-SIV encryption provides security and customer isolation
 - **Named Stores** — Optional human-readable names instead of opaque IDs
 - **TTL Management** — Automatic expiration and garbage collection
 - **Unix Socket API** — Local access with filesystem-based permission control
@@ -200,7 +200,7 @@ These trade-offs make Big Bunny fast and simple to operate. If you need durabili
 
 ## Security
 
-Store IDs use AES-256-SIV encryption with per-customer key derivation via HKDF. This provides cryptographic isolation—even with a bug in the routing logic, customers can't access each other's data because they literally can't decrypt the store IDs.
+Store IDs use AES-128-SIV encryption with per-customer key derivation via HKDF. This provides cryptographic isolation—even with a bug in the routing logic, customers can't access each other's data because they literally can't decrypt the store IDs.
 
 Best practices:
 - Generate keys with `openssl rand -hex 32`
