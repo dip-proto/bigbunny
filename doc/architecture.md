@@ -196,6 +196,36 @@ If replication falls behind significantly, the replication queue can grow large 
 
 If a lock is held during a crash, it will automatically expire after 500 milliseconds. But during that time, the store is unavailable for modification. Applications need to handle `StoreLocked` errors appropriately, typically by waiting and retrying.
 
+## Resource Exhaustion Protection
+
+Big Bunny includes several mechanisms to prevent resource exhaustion attacks, both from malicious actors and from buggy applications.
+
+### Memory Limits
+
+The global memory limit (`--memory-limit`) caps the total memory used by all stores. When the limit is reached, create operations fail with `CapacityExceeded`. This prevents Big Bunny from consuming all available system memory and crashing.
+
+Beyond the global limit, per-customer memory quotas (`--customer-memory-quota`) prevent any single customer from monopolizing memory. This is important in multi-tenant environments where you can't trust all customers equally. When a customer hits their quota, their create operations fail with `CustomerQuotaExceeded`, but other customers can continue normally.
+
+### Tombstone Limits
+
+Tombstones prevent resurrection of deleted stores during replication, but they consume memory and are only cleaned up after 24 hours. An attacker could exhaust memory by rapidly creating and deleting stores, generating tombstones faster than they expire.
+
+Tombstone limits (`--tombstone-customer-limit` and `--tombstone-global-limit`) cap how many tombstones can exist. When limits are reached, delete operations fail with `TombstoneLimitExceeded`. This prevents the attack while allowing legitimate deletion patterns.
+
+The per-customer limit affects only that customer's ability to delete, while the global limit protects against coordinated attacks from multiple customers.
+
+### HTTP Server Timeouts
+
+Slowloris-style attacks hold HTTP connections open indefinitely, exhausting server resources without making many requests. Big Bunny's HTTP server timeouts prevent this by closing connections that don't complete within reasonable time limits.
+
+The `--http-read-timeout` limits how long a client can take to send the complete request. The `--http-write-timeout` limits response time. The `--http-idle-timeout` closes inactive keep-alive connections. Together, these ensure that connections don't hang indefinitely consuming server resources.
+
+### Rate Limiting
+
+Per-customer rate limiting (`--rate-limit` and `--burst-size`) uses a token bucket algorithm to prevent request flooding. Each customer gets a bucket that refills at the configured rate. When the bucket is empty, requests are rejected with HTTP 429 and a `Retry-After` header.
+
+This protects against accidental or intentional request flooding by a single customer. It doesn't protect against distributed attacks from many customers, which would need to be handled at the network layer (load balancer, CDN, etc.).
+
 ## Future Directions
 
 Big Bunny makes specific trade-offs that work well for session storage, but there are extensions that could be valuable for different use cases.

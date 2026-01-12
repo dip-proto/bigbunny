@@ -69,7 +69,9 @@ On success, you get back a 200 response with the store ID in the body. It looks 
 
 The possible errors you might see are:
 
-- **507 Insufficient Storage** with error code `CapacityExceeded` means the node has hit its memory limit and can't accept new stores. You'll need to either clean up old stores, increase the memory limit, or add more capacity.
+- **507 Insufficient Storage** with error code `CapacityExceeded` means the node has hit its global memory limit and can't accept new stores. You'll need to either clean up old stores, increase the memory limit, or add more capacity.
+
+- **507 Insufficient Storage** with error code `CustomerQuotaExceeded` means your customer has exceeded its per-customer memory quota. Other customers can still create stores—only your customer is affected. Clean up old stores or request a higher quota.
 
 - **503 Service Unavailable** with error code `LeaderChanged` is rare—it means the node couldn't forward your request to the primary (typically due to network issues or the primary being unavailable). Requests are automatically forwarded to the primary internally, but if forwarding fails, you'll see this error with a `Retry-After: 1` header suggesting you retry.
 
@@ -216,6 +218,8 @@ Behind the scenes, Big Bunny creates a tombstone for each deleted store. The tom
 The possible errors:
 
 - **403 Forbidden** with `Unauthorized` means the customer ID is wrong.
+
+- **429 Too Many Requests** with `TombstoneLimitExceeded` means you've deleted too many stores too quickly. Tombstones are retained for 24 hours to prevent resurrection during replication, and limits prevent memory exhaustion from rapid delete cycles. Wait for tombstones to expire (24 hours) or contact your administrator.
 
 - **503 Service Unavailable** with `LeaderChanged` means automatic forwarding to the primary failed. Retry the request.
 
@@ -507,23 +511,25 @@ And here are the response headers Big Bunny might include:
 
 Every error response includes a `BigBunny-Error-Code` header with a machine-readable error code. Here's the complete list:
 
-| Code               | HTTP | Retryable | Description                       |
-| ------------------ | ---- | --------- | --------------------------------- |
-| `NotFound`         | 404  | No        | Store or name not found           |
-| `Unauthorized`     | 403  | No        | Customer ID mismatch              |
-| `StoreLocked`      | 409  | Yes       | Lock held by another request      |
-| `LockMismatch`     | 409  | No        | Wrong lock ID                     |
-| `StoreExpired`     | 410  | No        | Store TTL expired                 |
-| `LeaderChanged`    | 503  | Yes       | Forwarding to primary failed      |
-| `StoreUnavailable` | 503  | Yes       | Node recovering                   |
-| `LockStateUnknown` | 409  | Yes       | Lock state unclear after failover |
-| `NameCreating`     | 503  | Yes       | Name reservation in progress      |
-| `CapacityExceeded` | 507  | No        | Memory limit reached              |
-| `TypeMismatch`     | 400  | No        | Counter op on blob or vice versa  |
-| `Overflow`         | 409  | No        | Integer overflow/underflow        |
-| `ValueOutOfBounds` | 400  | No        | Counter value outside min/max     |
-| `InvalidBounds`    | 400  | No        | Counter min > max                 |
-| (none)             | 429  | Yes       | Rate limit exceeded for customer  |
+| Code                      | HTTP | Retryable | Description                           |
+| ------------------------- | ---- | --------- | ------------------------------------- |
+| `NotFound`                | 404  | No        | Store or name not found               |
+| `Unauthorized`            | 403  | No        | Customer ID mismatch                  |
+| `StoreLocked`             | 409  | Yes       | Lock held by another request          |
+| `LockMismatch`            | 409  | No        | Wrong lock ID                         |
+| `StoreExpired`            | 410  | No        | Store TTL expired                     |
+| `LeaderChanged`           | 503  | Yes       | Forwarding to primary failed          |
+| `StoreUnavailable`        | 503  | Yes       | Node recovering                       |
+| `LockStateUnknown`        | 409  | Yes       | Lock state unclear after failover     |
+| `NameCreating`            | 503  | Yes       | Name reservation in progress          |
+| `CapacityExceeded`        | 507  | No        | Memory limit reached                  |
+| `CustomerQuotaExceeded`   | 507  | No        | Per-customer memory quota reached     |
+| `TombstoneLimitExceeded`  | 429  | Yes       | Too many recent deletes (wait 24h)    |
+| `TypeMismatch`            | 400  | No        | Counter op on blob or vice versa      |
+| `Overflow`                | 409  | No        | Integer overflow/underflow            |
+| `ValueOutOfBounds`        | 400  | No        | Counter value outside min/max         |
+| `InvalidBounds`           | 400  | No        | Counter min > max                     |
+| (none)                    | 429  | Yes       | Rate limit exceeded for customer      |
 
 The "Retryable" column indicates whether you should retry the request. For errors like `NotFound` or `LockMismatch`, retrying won't help—you need to fix the problem first. For errors like `StoreLocked` or `LeaderChanged`, retrying after a delay is the right response.
 

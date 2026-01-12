@@ -121,7 +121,17 @@ Let's walk through various attack scenarios and see how Big Bunny handles them.
 
 **Targeted host overload**: An attacker tries to force all their stores onto a single victim host to exhaust its resources. For anonymous stores, the attacker could create many stores and use timing/network analysis to identify which host served each request, keeping only stores on the target host. For named stores, this is more dangerous: the attacker could pre-compute customerID:name combinations that hash to the victim host and create stores with those exact names. The routing secret prevents both attacks. Without knowing the secret, offline pre-computation is impossible, and online trial-and-error becomes detectable and rate-limitable.
 
-**Denial of service**: An attacker floods with requests to exhaust resources. Big Bunny has multiple layers of protection. Per-customer rate limiting enforces request limits (default: 100 req/s per customer with 200 burst capacity), preventing any single customer from overwhelming the system. Memory limits prevent unbounded memory consumption. Lock timeouts prevent indefinite locking. Per-store serialization limits the blast radius. The routing secret prevents targeted attacks where all traffic goes to one host. Rate limiting is configurable via `--rate-limit` and `--burst-size` flags and can be disabled entirely if running in a trusted environment. For distributed denial of service attacks spanning multiple customers, additional protection at the load balancer or network layer remains advisable.
+**Denial of service**: An attacker floods with requests to exhaust resources. Big Bunny has multiple layers of protection:
+
+- **Per-customer rate limiting** enforces request limits (default: 100 req/s per customer with 200 burst capacity), preventing any single customer from overwhelming the system with requests.
+- **Per-customer memory quotas** prevent any single customer from consuming all available memory. Configure with `--customer-memory-quota` (e.g., 100MB per customer).
+- **Tombstone limits** prevent rapid create/delete cycles from exhausting memory. Tombstones are retained for 24 hours to prevent resurrection during replication, so an attacker could create tombstones faster than they expire. The `--tombstone-customer-limit` and `--tombstone-global-limit` flags cap how many tombstones can exist.
+- **HTTP server timeouts** protect against Slowloris-style attacks where malicious clients hold connections open indefinitely. Configure with `--http-read-timeout`, `--http-write-timeout`, etc.
+- **Memory limits** prevent unbounded memory consumption at the global level.
+- **Lock timeouts** prevent indefinite locking.
+- **The routing secret** prevents targeted attacks where all traffic goes to one host.
+
+Rate limiting is configurable via `--rate-limit` and `--burst-size` flags and can be disabled entirely if running in a trusted environment. For distributed denial of service attacks spanning multiple customers, additional protection at the load balancer or network layer remains advisable.
 
 **Information leakage**: An attacker tries to infer information from store IDs or error messages. Store ID length reveals the site name length, which is minor. Deterministic encryption means identical plaintexts produce identical ciphertexts, but the unique identifier in each store ID prevents this from being useful. Error messages are generic—both invalid store IDs and wrong-customer IDs return "400 Bad Request" without details. Timing attacks are theoretically possible, but AES-SIV is implemented in constant time in the crypto libraries Big Bunny uses.
 
@@ -194,13 +204,31 @@ Data deletion is immediate for active stores. When you delete a store, it's remo
 
 There's no mechanism for secure deletion (zeroing memory). Big Bunny relies on the Go garbage collector, which doesn't zero memory pages before freeing them. If secure deletion is critical for your use case, you'd need to implement it at a different layer (like using encrypted memory or secure OS features).
 
+## Resource Exhaustion Protection
+
+Big Bunny includes comprehensive protection against resource exhaustion attacks. These features prevent any single customer or attacker from monopolizing system resources.
+
+**Per-customer memory quotas** limit how much memory each customer can use. Configure with `--customer-memory-quota=104857600` (100MB). When exceeded, create operations return `CustomerQuotaExceeded` (HTTP 507). Set to 0 to disable.
+
+**Tombstone limits** prevent rapid create/delete attacks. Tombstones are created when stores are deleted and retained for 24 hours to prevent resurrection during replication. Without limits, an attacker could exhaust memory by creating tombstones faster than they expire. Configure with `--tombstone-customer-limit=1000` and `--tombstone-global-limit=10000`. When exceeded, delete operations return `TombstoneLimitExceeded` (HTTP 429).
+
+**HTTP server timeouts** protect against Slowloris attacks where malicious clients hold connections open. Configure with:
+
+```bash
+--http-read-timeout=30s           # Time to read entire request
+--http-read-header-timeout=10s    # Time to read headers
+--http-write-timeout=30s          # Time to write response
+--http-idle-timeout=120s          # Keep-alive connection timeout
+--http-max-header-bytes=1048576   # Max header size (1 MB)
+```
+
+These protections are all disabled by default (set to 0) for backward compatibility. Enable them in production for defense in depth.
+
 ## Future Security Improvements
 
 Several security enhancements would make sense for production deployments beyond the PoC.
 
 **mTLS for internal endpoints** would encrypt replication traffic and verify peer identities. Nodes would exchange certificates during the TLS handshake and verify them against a trusted CA. This prevents eavesdropping and man-in-the-middle attacks on replication traffic.
-
-**Per-customer resource quotas** would limit the blast radius of abuse. You could restrict each customer to a maximum number of stores or maximum memory usage (beyond the global memory limit). This prevents one customer from consuming all resources and impacting others.
 
 **Enhanced audit logging** would provide better visibility into what's happening. Structured logging with customer IDs, operation types, store IDs (hashed for privacy), timestamps, and outcomes would feed into SIEM systems for security analysis.
 
@@ -212,4 +240,4 @@ For general security questions about Big Bunny, consult this documentation first
 
 For security vulnerabilities, do not file public GitHub issues. Instead, contact the security team at security@bigbunny.example (this is placeholder—update with real contact). Provide details about the vulnerability, steps to reproduce, and potential impact. The team will work with you on coordinated disclosure.
 
-Big Bunny is a proof of concept. The security model is sound for session storage on trusted networks, but production hardening would require additional features like mTLS, enhanced audit logging, and per-customer quotas. Evaluate whether the current security posture meets your requirements before deploying in production.
+Big Bunny is a proof of concept. The security model is sound for session storage on trusted networks. Per-customer resource quotas and HTTP server timeouts are available for defense against resource exhaustion attacks, but production hardening may still require additional features like mTLS and enhanced audit logging. Evaluate whether the current security posture meets your requirements before deploying in production.
