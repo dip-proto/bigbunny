@@ -485,9 +485,9 @@ func TestDisableSiteVerification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open with different site should succeed when verification disabled: %v", err)
 	}
-	// The decrypted site should still be the original site from the plaintext
-	if components.Site != "site-a" {
-		t.Errorf("decrypted site mismatch: got %q, want site-a", components.Site)
+	// Site is not in plaintext, so we get back expectedSite
+	if components.Site != "site-b" {
+		t.Errorf("decrypted site mismatch: got %q, want site-b", components.Site)
 	}
 }
 
@@ -508,8 +508,9 @@ func TestDisableSiteVerificationCrossSiteInterop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Cross-site Open should succeed when verification disabled: %v", err)
 	}
-	if components.Site != "site-a" {
-		t.Errorf("decrypted site should be original: got %q, want site-a", components.Site)
+	// Site is not in plaintext, so we get back expectedSite
+	if components.Site != "site-b" {
+		t.Errorf("decrypted site should be expectedSite: got %q, want site-b", components.Site)
 	}
 }
 

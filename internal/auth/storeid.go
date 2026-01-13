@@ -256,7 +256,7 @@ func (c *cipherImpl) Seal(site, shardID, unique, customerID string) (string, err
 		return "", fmt.Errorf("failed to create cipher: %w", err)
 	}
 
-	plaintext := fmt.Sprintf("%s:%s:%s", site, shardID, unique)
+	plaintext := fmt.Sprintf("%s:%s", shardID, unique)
 	aad := []byte(AADPrefix + customerID)
 	ciphertext := aead.Seal(nil, nil, []byte(plaintext), aad)
 
@@ -314,20 +314,13 @@ func (c *cipherImpl) Open(storeID, expectedSite, customerID string) (*StoreIDCom
 		return nil, ErrInvalidStoreID
 	}
 
-	plaintextParts := strings.SplitN(string(plaintext), ":", 3)
-	if len(plaintextParts) != 3 {
+	plaintextParts := strings.SplitN(string(plaintext), ":", 2)
+	if len(plaintextParts) != 2 {
 		return nil, ErrInvalidStoreID
 	}
 
-	site := plaintextParts[0]
-	shardID := plaintextParts[1]
-	unique := plaintextParts[2]
-
-	// Verify the decrypted site matches expected (defense in depth)
-	// Skip this check when site verification is disabled
-	if !c.disableSiteVerification && site != expectedSite {
-		return nil, ErrInvalidStoreID
-	}
+	shardID := plaintextParts[0]
+	unique := plaintextParts[1]
 
 	if !shardIDPattern.MatchString(shardID) {
 		return nil, ErrInvalidStoreID
@@ -337,7 +330,7 @@ func (c *cipherImpl) Open(storeID, expectedSite, customerID string) (*StoreIDCom
 	}
 
 	return &StoreIDComponents{
-		Site:     site,
+		Site:     expectedSite,
 		ShardID:  shardID,
 		UniqueID: unique,
 	}, nil
