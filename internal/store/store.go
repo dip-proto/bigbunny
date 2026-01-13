@@ -364,6 +364,19 @@ func (m *Manager) CreateIfNotExists(s *Store) error {
 	return nil
 }
 
+func (m *Manager) removeStoreLocked(s *Store) {
+	size := storeSize(s)
+	m.usedBytes -= size
+	m.customerMemory[s.CustomerID] -= size
+	if m.customerMemory[s.CustomerID] == 0 {
+		delete(m.customerMemory, s.CustomerID)
+	}
+	delete(m.stores, s.ID)
+	if idx := m.customerIndex[s.CustomerID]; idx != nil {
+		delete(idx, s.ID)
+	}
+}
+
 // Delete removes a store after verifying customer ownership.
 func (m *Manager) Delete(storeID, customerID string) error {
 	m.mu.Lock()
@@ -377,16 +390,7 @@ func (m *Manager) Delete(storeID, customerID string) error {
 		return ErrUnauthorized
 	}
 
-	size := storeSize(s)
-	m.usedBytes -= size
-	m.customerMemory[customerID] -= size
-	if m.customerMemory[customerID] == 0 {
-		delete(m.customerMemory, customerID)
-	}
-	delete(m.stores, storeID)
-	if idx := m.customerIndex[customerID]; idx != nil {
-		delete(idx, storeID)
-	}
+	m.removeStoreLocked(s)
 	return nil
 }
 
@@ -643,16 +647,7 @@ func (m *Manager) ForceDelete(storeID string) error {
 		return nil // idempotent
 	}
 
-	size := storeSize(s)
-	m.usedBytes -= size
-	m.customerMemory[s.CustomerID] -= size
-	if m.customerMemory[s.CustomerID] == 0 {
-		delete(m.customerMemory, s.CustomerID)
-	}
-	delete(m.stores, storeID)
-	if idx := m.customerIndex[s.CustomerID]; idx != nil {
-		delete(idx, storeID)
-	}
+	m.removeStoreLocked(s)
 	return nil
 }
 
@@ -678,16 +673,7 @@ func (m *Manager) DeleteIfExpiredAndUnlocked(storeID string) bool {
 		return false
 	}
 
-	size := storeSize(s)
-	m.usedBytes -= size
-	m.customerMemory[s.CustomerID] -= size
-	if m.customerMemory[s.CustomerID] == 0 {
-		delete(m.customerMemory, s.CustomerID)
-	}
-	delete(m.stores, storeID)
-	if idx := m.customerIndex[s.CustomerID]; idx != nil {
-		delete(idx, storeID)
-	}
+	m.removeStoreLocked(s)
 	return true
 }
 

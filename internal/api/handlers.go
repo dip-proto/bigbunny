@@ -389,16 +389,7 @@ func (s *Server) handleCreateByName(w http.ResponseWriter, r *http.Request) {
 
 	entry, err := reg.Reserve(customerID, name, s.replica.LeaderEpoch())
 	if err != nil {
-		switch err {
-		case registry.ErrNameExists:
-			http.Error(w, "name already exists", http.StatusConflict)
-		case registry.ErrNameReserved:
-			http.Error(w, "name reservation in progress", http.StatusConflict)
-		case registry.ErrNameDeleting:
-			http.Error(w, "name deletion in progress", http.StatusConflict)
-		default:
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
+		writeHTTPError(w, err, err.Error())
 		return
 	}
 
@@ -1427,16 +1418,7 @@ func (s *Server) handleRegistryReserve(w http.ResponseWriter, r *http.Request) {
 
 	entry, err := reg.Reserve(req.CustomerID, req.Name, s.replica.LeaderEpoch())
 	if err != nil {
-		switch err {
-		case registry.ErrNameExists:
-			http.Error(w, "name already exists", http.StatusConflict)
-		case registry.ErrNameReserved:
-			http.Error(w, "name reservation in progress", http.StatusConflict)
-		case registry.ErrNameDeleting:
-			http.Error(w, "name deletion in progress", http.StatusConflict)
-		default:
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
+		writeHTTPError(w, err, err.Error())
 		return
 	}
 

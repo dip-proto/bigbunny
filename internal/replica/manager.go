@@ -314,28 +314,16 @@ func (m *Manager) replicationLoop() {
 	}
 }
 
-func (m *Manager) replicateToSecondary(msg *ReplicationMessage) {
-	if msg.StoreID == "" {
-		return
-	}
-
-	// Determine which hosts to replicate to
+func (m *Manager) getReplicationTargets(shardKey string) []*routing.Host {
 	var targets []*routing.Host
 	if m.config.BroadcastReplication {
-		// Test mode: replicate to all other hosts
 		for _, host := range m.hasher.GetAllHosts() {
 			if host.ID != m.config.HostID {
 				targets = append(targets, host)
 			}
 		}
 	} else {
-		// Production mode: use per-shard routing
-		// ShardID is carried in the message (required for encrypted store IDs)
-		if msg.ShardID == "" {
-			log.Printf("replication message missing ShardID for store %s", msg.StoreID)
-			return
-		}
-		replicaSet := m.hasher.GetReplicaSet(msg.ShardID)
+		replicaSet := m.hasher.GetReplicaSet(shardKey)
 		if replicaSet != nil {
 			if replicaSet.Primary != nil && replicaSet.Primary.ID != m.config.HostID {
 				targets = append(targets, replicaSet.Primary)
@@ -345,6 +333,20 @@ func (m *Manager) replicateToSecondary(msg *ReplicationMessage) {
 			}
 		}
 	}
+	return targets
+}
+
+func (m *Manager) replicateToSecondary(msg *ReplicationMessage) {
+	if msg.StoreID == "" {
+		return
+	}
+
+	if msg.ShardID == "" {
+		log.Printf("replication message missing ShardID for store %s", msg.StoreID)
+		return
+	}
+
+	targets := m.getReplicationTargets(msg.ShardID)
 
 	// Track whether any target failed in this round
 	anyFailed := false
@@ -838,28 +840,8 @@ func (m *Manager) registryReplicationLoop() {
 }
 
 func (m *Manager) replicateRegistryToSecondary(msg *RegistryReplicationMessage) {
-	// Determine which hosts to replicate to
-	var targets []*routing.Host
-	if m.config.BroadcastReplication {
-		// Test mode: replicate to all other hosts
-		for _, host := range m.hasher.GetAllHosts() {
-			if host.ID != m.config.HostID {
-				targets = append(targets, host)
-			}
-		}
-	} else {
-		// Production mode: use per-shard routing with customer_id:name as shard key
-		shardKey := msg.CustomerID + ":" + msg.Name
-		replicaSet := m.hasher.GetReplicaSet(shardKey)
-		if replicaSet != nil {
-			if replicaSet.Primary != nil && replicaSet.Primary.ID != m.config.HostID {
-				targets = append(targets, replicaSet.Primary)
-			}
-			if replicaSet.Secondary != nil && replicaSet.Secondary.ID != m.config.HostID {
-				targets = append(targets, replicaSet.Secondary)
-			}
-		}
-	}
+	shardKey := msg.CustomerID + ":" + msg.Name
+	targets := m.getReplicationTargets(shardKey)
 
 	for _, host := range targets {
 		if err := m.sendRegistryReplicationMessage(host.Address, msg); err != nil {
