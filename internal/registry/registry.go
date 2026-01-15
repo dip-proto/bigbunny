@@ -3,6 +3,7 @@ package registry
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"log"
 	"sync"
 	"time"
 )
@@ -88,15 +89,27 @@ func (e *Entry) IsReservationExpired() bool {
 // It ensures name uniqueness within each customer's namespace and coordinates with
 // replication to maintain consistency across nodes.
 type Manager struct {
-	mu      sync.RWMutex
-	entries map[string]*Entry // key = customerID:name
+	mu        sync.RWMutex
+	entries   map[string]*Entry // key = customerID:name
+	byStoreID map[string]*Entry // index: storeID → entry (active entries only)
 }
 
 // NewManager creates an empty registry manager ready to accept reservations.
 func NewManager() *Manager {
 	return &Manager{
-		entries: make(map[string]*Entry),
+		entries:   make(map[string]*Entry),
+		byStoreID: make(map[string]*Entry),
 	}
+}
+
+// indexByStoreID adds an entry to the storeID index, logging if a collision is detected.
+// Caller must hold m.mu.
+func (m *Manager) indexByStoreID(entry *Entry) {
+	if existing, exists := m.byStoreID[entry.StoreID]; exists && existing.Key() != entry.Key() {
+		log.Printf("registry: storeID collision detected: %s claimed by both %s and %s",
+			entry.StoreID, existing.Key(), entry.Key())
+	}
+	m.byStoreID[entry.StoreID] = entry
 }
 
 // Reserve attempts to claim a name for a customer. This is the first phase of the
@@ -169,6 +182,8 @@ func (m *Manager) Commit(customerID, name, reservationID, storeID string, expire
 	entry.LeaderEpoch = leaderEpoch
 	entry.Version++
 
+	m.indexByStoreID(entry)
+
 	return entry.Copy(), nil
 }
 
@@ -219,17 +234,16 @@ func (m *Manager) Lookup(customerID, name string) (*Entry, error) {
 }
 
 // LookupByStoreID finds an active entry by its store ID. This is useful for reverse lookups
-// when you have a store ID but need to find its registered name.
+// when you have a store ID but need to find its registered name. Uses an O(1) index lookup.
 func (m *Manager) LookupByStoreID(storeID string) (*Entry, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	for _, entry := range m.entries {
-		if entry.StoreID == storeID && entry.State == StateActive {
-			return entry.Copy(), nil
-		}
+	entry, exists := m.byStoreID[storeID]
+	if !exists {
+		return nil, ErrEntryNotFound
 	}
-	return nil, ErrEntryNotFound
+	return entry.Copy(), nil
 }
 
 // MarkDeleting transitions an active entry to the deleting state. This prevents new
@@ -250,6 +264,11 @@ func (m *Manager) MarkDeleting(customerID, name string, leaderEpoch uint64) (*En
 
 	if entry.State == StateCreating {
 		return nil, ErrInvalidState
+	}
+
+	// Remove from storeID index (index is for active entries only)
+	if entry.StoreID != "" {
+		delete(m.byStoreID, entry.StoreID)
 	}
 
 	entry.State = StateDeleting
@@ -273,6 +292,11 @@ func (m *Manager) Delete(customerID, name string) error {
 
 	if entry.CustomerID != customerID {
 		return ErrUnauthorized
+	}
+
+	// Remove from storeID index if active
+	if entry.StoreID != "" {
+		delete(m.byStoreID, entry.StoreID)
 	}
 
 	delete(m.entries, key)
@@ -301,6 +325,11 @@ func (m *Manager) RevertToActive(customerID, name string) error {
 
 	entry.State = StateActive
 	entry.Version++
+
+	if entry.StoreID != "" {
+		m.indexByStoreID(entry)
+	}
+
 	return nil
 }
 
@@ -314,12 +343,23 @@ func (m *Manager) ApplyReplicatedEntry(e *Entry) error {
 	existing, exists := m.entries[key]
 
 	if !exists {
-		m.entries[key] = e.Copy()
+		newEntry := e.Copy()
+		m.entries[key] = newEntry
+		if newEntry.StoreID != "" && newEntry.State == StateActive {
+			m.indexByStoreID(newEntry)
+		}
 		return nil
 	}
 
 	if e.Version > existing.Version {
-		m.entries[key] = e.Copy()
+		if existing.StoreID != "" {
+			delete(m.byStoreID, existing.StoreID)
+		}
+		newEntry := e.Copy()
+		m.entries[key] = newEntry
+		if newEntry.StoreID != "" && newEntry.State == StateActive {
+			m.indexByStoreID(newEntry)
+		}
 	}
 	return nil
 }
@@ -331,6 +371,9 @@ func (m *Manager) ApplyReplicatedDelete(customerID, name string) error {
 	defer m.mu.Unlock()
 
 	key := MakeKey(customerID, name)
+	if entry, exists := m.entries[key]; exists && entry.StoreID != "" {
+		delete(m.byStoreID, entry.StoreID)
+	}
 	delete(m.entries, key)
 	return nil
 }
@@ -409,7 +452,11 @@ func (m *Manager) Reset(entries []*Entry) {
 	defer m.mu.Unlock()
 
 	m.entries = make(map[string]*Entry)
+	m.byStoreID = make(map[string]*Entry)
 	for _, e := range entries {
 		m.entries[e.Key()] = e
+		if e.StoreID != "" && e.State == StateActive {
+			m.indexByStoreID(e)
+		}
 	}
 }
