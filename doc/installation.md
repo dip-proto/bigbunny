@@ -353,7 +353,7 @@ Beyond the global memory limit, you can set per-customer quotas to prevent any s
 ./bbd --customer-memory-quota=104857600  # 100 MB per customer
 ```
 
-When a customer hits their quota, additional create operations return a `CustomerQuotaExceeded` error (HTTP 507). Set to 0 to disable per-customer quotas.
+When a customer hits their quota, operations that would increase memory usage (creates, updates, complete-modify, counter mutations) return a `CustomerQuotaExceeded` error (HTTP 507). Set to 0 to disable per-customer quotas.
 
 ### Tombstone Limits
 

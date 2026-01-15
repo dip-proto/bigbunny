@@ -166,6 +166,32 @@ func storeSize(s *Store) int64 {
 	return int64(len(s.Body)) + storeOverhead
 }
 
+// checkQuotaForDelta checks if a size increase would exceed global or per-customer limits.
+// Returns ErrCustomerQuotaExceeded or ErrCapacityExceeded on violation.
+// Error precedence: per-customer quota is checked first (consistent with Create),
+// then global limit. This provides clearer feedback to tenants about their own usage.
+// Must be called with m.mu held.
+func (m *Manager) checkQuotaForDelta(customerID string, sizeDelta int64) error {
+	if sizeDelta <= 0 {
+		return nil // decreases or no change always allowed
+	}
+
+	// Check per-customer quota first
+	if m.customerMemoryQuota > 0 {
+		customerUsed := m.customerMemory[customerID]
+		if customerUsed+sizeDelta > m.customerMemoryQuota {
+			return ErrCustomerQuotaExceeded
+		}
+	}
+
+	// Check global limit
+	if m.memoryLimit > 0 && m.usedBytes+sizeDelta > m.memoryLimit {
+		return ErrCapacityExceeded
+	}
+
+	return nil
+}
+
 // Create adds a new store to the manager, enforcing memory limits and customer quotas.
 func (m *Manager) Create(s *Store) error {
 	m.mu.Lock()
@@ -224,6 +250,7 @@ func (m *Manager) Get(storeID, customerID string) (*Store, error) {
 }
 
 // Update replaces the store contents, incrementing its version and adjusting memory tracking.
+// Enforces both global and per-customer quota limits on size increases.
 func (m *Manager) Update(s *Store) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -240,6 +267,12 @@ func (m *Manager) Update(s *Store) error {
 	oldSize := storeSize(existing)
 	newSize := storeSize(s)
 	sizeDelta := newSize - oldSize
+
+	// Enforce quotas on size increases
+	if err := m.checkQuotaForDelta(s.CustomerID, sizeDelta); err != nil {
+		return err
+	}
+
 	m.usedBytes += sizeDelta
 	m.customerMemory[s.CustomerID] += sizeDelta
 
@@ -508,6 +541,7 @@ func (m *Manager) ForceReleaseLock(storeID string) error {
 
 // CompleteLock atomically updates a store and releases its lock.
 // The lockID must match the current holder. Optionally updates TTL.
+// Enforces both global and per-customer quota limits on size increases.
 func (m *Manager) CompleteLock(storeID, customerID, lockID string, newBody []byte, newExpiresAt time.Time) (*Store, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -527,8 +561,9 @@ func (m *Manager) CompleteLock(storeID, customerID, lockID string, newBody []byt
 	newSize := int64(len(newBody)) + storeOverhead
 	sizeDelta := newSize - oldSize
 
-	if m.memoryLimit > 0 && sizeDelta > 0 && m.usedBytes+sizeDelta > m.memoryLimit {
-		return nil, ErrCapacityExceeded
+	// Enforce quotas on size increases
+	if err := m.checkQuotaForDelta(customerID, sizeDelta); err != nil {
+		return nil, err
 	}
 
 	s.Body = newBody
@@ -831,16 +866,21 @@ func (m *Manager) Increment(storeID, customerID string, delta int64, leaderEpoch
 		return nil, err
 	}
 
-	// Update store
+	// Calculate size delta and enforce quotas before updating
 	oldSize := storeSize(s)
+	newSize := int64(len(newBody)) + storeOverhead
+	sizeDelta := newSize - oldSize
+	if err := m.checkQuotaForDelta(customerID, sizeDelta); err != nil {
+		return nil, err
+	}
+
+	// Update store
 	s.Body = newBody
 	s.Version++
 	s.LeaderEpoch = leaderEpoch
 	if !newExpiresAt.IsZero() {
 		s.ExpiresAt = newExpiresAt
 	}
-	newSize := storeSize(s)
-	sizeDelta := newSize - oldSize
 	m.usedBytes += sizeDelta
 	m.customerMemory[s.CustomerID] += sizeDelta
 
@@ -927,15 +967,20 @@ func (m *Manager) SetCounter(storeID, customerID string, value int64, newExpires
 		return 0, err
 	}
 
-	// Update store
+	// Calculate size delta and enforce quotas before updating
 	oldSize := storeSize(s)
+	newSize := int64(len(newBody)) + storeOverhead
+	sizeDelta := newSize - oldSize
+	if err := m.checkQuotaForDelta(customerID, sizeDelta); err != nil {
+		return 0, err
+	}
+
+	// Update store
 	s.Body = newBody
 	s.Version++
 	if !newExpiresAt.IsZero() {
 		s.ExpiresAt = newExpiresAt
 	}
-	newSize := storeSize(s)
-	sizeDelta := newSize - oldSize
 	m.usedBytes += sizeDelta
 	m.customerMemory[s.CustomerID] += sizeDelta
 

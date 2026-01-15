@@ -214,7 +214,7 @@ For high write rate, you might just be pushing more traffic than the system can 
 
 ### Memory Exhaustion
 
-When Big Bunny hits its memory limit, it stops accepting new stores. Existing stores keep working fine, but creates return `CapacityExceeded` errors.
+When Big Bunny hits its memory limit, it stops accepting operations that would increase memory usage. Existing stores keep working fine, but creates and updates that grow store size return `CapacityExceeded` errors.
 
 Check memory usage in the status output. If you're at or near your limit, you have a few options. The immediate fix is to raise the memory limit and restart. If you set `--memory-limit=4294967296` (4GB), try `--memory-limit=8589934592` (8GB).
 
@@ -224,9 +224,9 @@ Are you creating more stores than you expected? Look at your usage patterns. May
 
 ### Customer Quota Exceeded
 
-If individual customers are hitting `CustomerQuotaExceeded` errors (HTTP 507), they've exceeded their per-customer memory allocation. This is different from global memory exhaustion—other customers can still create stores.
+If individual customers are hitting `CustomerQuotaExceeded` errors (HTTP 507), they've exceeded their per-customer memory allocation. This is different from global memory exhaustion—other customers can still operate normally. The quota applies to all operations that increase memory usage: creates, updates, complete-modify, and counter mutations.
 
-Check which customers are hitting limits and why. Are they creating more stores than expected? Are their stores larger than typical? Sometimes this indicates a bug in the client application (forgetting to delete old stores, for example).
+Check which customers are hitting limits and why. Are they creating more stores than expected? Are their stores larger than typical? Are updates growing store sizes over time? Sometimes this indicates a bug in the client application (forgetting to delete old stores, or stores growing unbounded).
 
 If the quota is legitimately too low for your workload, increase it:
 

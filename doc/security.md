@@ -215,7 +215,7 @@ There's no mechanism for secure deletion (zeroing memory). Big Bunny relies on t
 
 Big Bunny includes comprehensive protection against resource exhaustion attacks. These features prevent any single customer or attacker from monopolizing system resources.
 
-**Per-customer memory quotas** limit how much memory each customer can use. Configure with `--customer-memory-quota=104857600` (100MB). When exceeded, create operations return `CustomerQuotaExceeded` (HTTP 507). Set to 0 to disable.
+**Per-customer memory quotas** limit how much memory each customer can use. Configure with `--customer-memory-quota=104857600` (100MB). When exceeded, operations that would increase memory usage (creates, updates, complete-modify, counter mutations) return `CustomerQuotaExceeded` (HTTP 507). Set to 0 to disable.
 
 **Tombstone limits** prevent rapid create/delete attacks. Tombstones are created when stores are deleted and retained for 24 hours to prevent resurrection during replication. Without limits, an attacker could exhaust memory by creating tombstones faster than they expire. Configure with `--tombstone-customer-limit=1000` and `--tombstone-global-limit=10000`. When exceeded, delete operations return `TombstoneLimitExceeded` (HTTP 429).
 

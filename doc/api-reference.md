@@ -180,7 +180,7 @@ All the usual errors apply here, plus:
 
 - **409 Conflict** with `LockMismatch` means the lock ID is wrong or the lock has expired.
 
-- **507 Insufficient Storage** with `CapacityExceeded` means the new contents are too large or would exceed the memory limit.
+- **507 Insufficient Storage** with `CapacityExceeded` or `CustomerQuotaExceeded` means the new contents would exceed the global memory limit or per-customer quota.
 
 ### Cancel Modify
 
@@ -578,7 +578,7 @@ Additional natural limits exist beyond rate limiting:
 
 - **Serialization**: Each store can only be modified by one client at a time. The 500-millisecond lock timeout means you can do at most 2 modifications per second per store.
 
-- **Memory capacity**: Once you hit your memory limit, creates start failing with `CapacityExceeded`.
+- **Memory capacity**: Once you hit your memory limit, creates and updates that increase store size fail with `CapacityExceeded` (or `CustomerQuotaExceeded` for per-customer limits).
 
 - **System resources**: CPU, memory, and network bandwidth impose practical limits. A single node can handle tens of thousands of operations per second before these become bottlenecks.
 

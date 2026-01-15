@@ -202,9 +202,9 @@ Big Bunny includes several mechanisms to prevent resource exhaustion attacks, bo
 
 ### Memory Limits
 
-The global memory limit (`--memory-limit`) caps the total memory used by all stores. When the limit is reached, create operations fail with `CapacityExceeded`. This prevents Big Bunny from consuming all available system memory and crashing.
+The global memory limit (`--memory-limit`) caps the total memory used by all stores. When the limit is reached, operations that would increase memory usage (creates, updates, complete-modify, counter mutations) fail with `CapacityExceeded`. This prevents Big Bunny from consuming all available system memory and crashing.
 
-Beyond the global limit, per-customer memory quotas (`--customer-memory-quota`) prevent any single customer from monopolizing memory. This is important in multi-tenant environments where you can't trust all customers equally. When a customer hits their quota, their create operations fail with `CustomerQuotaExceeded`, but other customers can continue normally.
+Beyond the global limit, per-customer memory quotas (`--customer-memory-quota`) prevent any single customer from monopolizing memory. This is important in multi-tenant environments where you can't trust all customers equally. When a customer hits their quota, operations that would increase their memory usage fail with `CustomerQuotaExceeded`, but other customers can continue normally. This applies to creates, updates, complete-modify, and counter operations—any path that could grow a customer's footprint.
 
 ### Tombstone Limits
 

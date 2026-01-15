@@ -858,3 +858,288 @@ func TestCounterConcurrentIncrements(t *testing.T) {
 		t.Errorf("expected value 100 from concurrent increments, got %d", data.Value)
 	}
 }
+
+// Tests for post-create quota enforcement
+
+func TestUpdateEnforcesCustomerQuota(t *testing.T) {
+	mgr := store.NewManager()
+	// Set a per-customer quota that allows a small store
+	mgr.SetCustomerMemoryQuota(500) // ~244 bytes for body after 256 overhead
+
+	// Create a small store within quota
+	s := &store.Store{
+		ID:         "store1",
+		CustomerID: "cust1",
+		Body:       []byte("small"),
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}
+	if err := mgr.Create(s); err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+
+	// Try to update with larger body that exceeds quota
+	bigBody := make([]byte, 1000) // way over 500-256=244 bytes allowance
+	updated := &store.Store{
+		ID:         s.ID,
+		CustomerID: s.CustomerID,
+		Body:       bigBody,
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}
+	err := mgr.Update(updated)
+	if err != store.ErrCustomerQuotaExceeded {
+		t.Errorf("expected ErrCustomerQuotaExceeded on update, got %v", err)
+	}
+
+	// Verify the store was not modified
+	got, _ := mgr.Get(s.ID, s.CustomerID)
+	if string(got.Body) != "small" {
+		t.Errorf("store body should be unchanged: got %q", got.Body)
+	}
+}
+
+func TestUpdateEnforcesGlobalLimit(t *testing.T) {
+	mgr := store.NewManagerWithLimit(500)
+
+	s := &store.Store{
+		ID:         "store1",
+		CustomerID: "cust1",
+		Body:       []byte("small"),
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}
+	if err := mgr.Create(s); err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+
+	// Try to update with body that exceeds global limit
+	bigBody := make([]byte, 1000)
+	updated := &store.Store{
+		ID:         s.ID,
+		CustomerID: s.CustomerID,
+		Body:       bigBody,
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}
+	err := mgr.Update(updated)
+	if err != store.ErrCapacityExceeded {
+		t.Errorf("expected ErrCapacityExceeded on update, got %v", err)
+	}
+}
+
+func TestCompleteLockEnforcesCustomerQuota(t *testing.T) {
+	mgr := store.NewManager()
+	mgr.SetCustomerMemoryQuota(500)
+
+	s := &store.Store{
+		ID:         "store1",
+		CustomerID: "cust1",
+		Body:       []byte("small"),
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}
+	if err := mgr.Create(s); err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+
+	// Acquire lock with long timeout to avoid flakiness on slow CI
+	_, err := mgr.AcquireLock(s.ID, s.CustomerID, "lock1", 30*time.Second)
+	if err != nil {
+		t.Fatalf("acquire lock failed: %v", err)
+	}
+
+	// Try to complete with body exceeding customer quota
+	bigBody := make([]byte, 1000)
+	_, err = mgr.CompleteLock(s.ID, s.CustomerID, "lock1", bigBody, time.Time{})
+	if err != store.ErrCustomerQuotaExceeded {
+		t.Errorf("expected ErrCustomerQuotaExceeded on complete lock, got %v", err)
+	}
+
+	// Lock should still be held after failed complete
+	// so another acquire should fail
+	_, err = mgr.AcquireLock(s.ID, s.CustomerID, "lock2", 30*time.Second)
+	if err != store.ErrStoreLocked {
+		t.Errorf("expected lock to still be held after failed complete, got %v", err)
+	}
+}
+
+func TestCustomerQuotaCrossCustomerIsolation(t *testing.T) {
+	mgr := store.NewManager()
+	mgr.SetCustomerMemoryQuota(400) // small quota
+
+	// Customer 1 creates a store near quota
+	s1 := &store.Store{
+		ID:         "store1",
+		CustomerID: "cust1",
+		Body:       make([]byte, 100),
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}
+	if err := mgr.Create(s1); err != nil {
+		t.Fatalf("cust1 create failed: %v", err)
+	}
+
+	// Customer 2 should also be able to create, independent of cust1
+	s2 := &store.Store{
+		ID:         "store2",
+		CustomerID: "cust2",
+		Body:       make([]byte, 100),
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}
+	if err := mgr.Create(s2); err != nil {
+		t.Fatalf("cust2 create should succeed independently: %v", err)
+	}
+
+	// Customer 1 tries to grow beyond their quota - should fail
+	updated := &store.Store{
+		ID:         s1.ID,
+		CustomerID: s1.CustomerID,
+		Body:       make([]byte, 300), // Would push cust1 over quota
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}
+	err := mgr.Update(updated)
+	if err != store.ErrCustomerQuotaExceeded {
+		t.Errorf("expected cust1 update to fail with quota exceeded, got %v", err)
+	}
+
+	// Customer 2 should still be able to grow their own store
+	updated2 := &store.Store{
+		ID:         s2.ID,
+		CustomerID: s2.CustomerID,
+		Body:       make([]byte, 120), // Still within cust2's quota
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}
+	if err := mgr.Update(updated2); err != nil {
+		t.Errorf("cust2 update should succeed: %v", err)
+	}
+}
+
+func TestUpdateAllowsSizeDecrease(t *testing.T) {
+	mgr := store.NewManager()
+	mgr.SetCustomerMemoryQuota(500)
+
+	// Create a store at quota edge
+	s := &store.Store{
+		ID:         "store1",
+		CustomerID: "cust1",
+		Body:       make([]byte, 200),
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}
+	if err := mgr.Create(s); err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+
+	// Decreasing size should always work
+	smaller := &store.Store{
+		ID:         s.ID,
+		CustomerID: s.CustomerID,
+		Body:       []byte("tiny"),
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}
+	if err := mgr.Update(smaller); err != nil {
+		t.Errorf("size decrease should be allowed: %v", err)
+	}
+}
+
+func TestCompleteLockEnforcesGlobalLimit(t *testing.T) {
+	mgr := store.NewManagerWithLimit(500)
+
+	s := &store.Store{
+		ID:         "store1",
+		CustomerID: "cust1",
+		Body:       []byte("small"),
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}
+	if err := mgr.Create(s); err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+
+	// Acquire lock
+	_, err := mgr.AcquireLock(s.ID, s.CustomerID, "lock1", 500*time.Millisecond)
+	if err != nil {
+		t.Fatalf("acquire lock failed: %v", err)
+	}
+
+	// Try to complete with body exceeding global limit
+	bigBody := make([]byte, 1000)
+	_, err = mgr.CompleteLock(s.ID, s.CustomerID, "lock1", bigBody, time.Time{})
+	if err != store.ErrCapacityExceeded {
+		t.Errorf("expected ErrCapacityExceeded on complete lock, got %v", err)
+	}
+}
+
+func TestIncrementEnforcesCustomerQuota(t *testing.T) {
+	mgr := store.NewManager()
+	// Set a very tight quota - just enough for a small counter
+	// Counter JSON: {"value":0} = ~11 bytes + 256 overhead = ~267 bytes
+	mgr.SetCustomerMemoryQuota(280)
+
+	// Create counter with value 0 (small JSON)
+	_, err := mgr.CreateCounter("counter1", "shard1", "cust1", 0, nil, nil, time.Now().Add(time.Hour), 1)
+	if err != nil {
+		t.Fatalf("create counter failed: %v", err)
+	}
+
+	// Increment to a large value - JSON grows from {"value":0} to {"value":9223372036854775807}
+	// This adds ~18 bytes to the JSON body
+	_, err = mgr.Increment("counter1", "cust1", 9223372036854775807, 1, time.Time{})
+	if err != store.ErrCustomerQuotaExceeded {
+		t.Errorf("expected ErrCustomerQuotaExceeded when increment grows JSON beyond quota, got %v", err)
+	}
+
+	// Verify the counter value was not changed
+	data, _, err := mgr.GetCounter("counter1", "cust1")
+	if err != nil {
+		t.Fatalf("get counter failed: %v", err)
+	}
+	if data.Value != 0 {
+		t.Errorf("counter value should be unchanged after failed increment: got %d", data.Value)
+	}
+}
+
+func TestIncrementEnforcesGlobalLimit(t *testing.T) {
+	mgr := store.NewManagerWithLimit(280)
+
+	_, err := mgr.CreateCounter("counter1", "shard1", "cust1", 0, nil, nil, time.Now().Add(time.Hour), 1)
+	if err != nil {
+		t.Fatalf("create counter failed: %v", err)
+	}
+
+	// Increment to a large value that exceeds global limit
+	_, err = mgr.Increment("counter1", "cust1", 9223372036854775807, 1, time.Time{})
+	if err != store.ErrCapacityExceeded {
+		t.Errorf("expected ErrCapacityExceeded when increment grows JSON beyond limit, got %v", err)
+	}
+}
+
+func TestSetCounterEnforcesCustomerQuota(t *testing.T) {
+	mgr := store.NewManager()
+	mgr.SetCustomerMemoryQuota(280)
+
+	_, err := mgr.CreateCounter("counter1", "shard1", "cust1", 0, nil, nil, time.Now().Add(time.Hour), 1)
+	if err != nil {
+		t.Fatalf("create counter failed: %v", err)
+	}
+
+	// Set to a large value - JSON grows significantly
+	_, err = mgr.SetCounter("counter1", "cust1", 9223372036854775807, time.Time{})
+	if err != store.ErrCustomerQuotaExceeded {
+		t.Errorf("expected ErrCustomerQuotaExceeded when SetCounter grows JSON beyond quota, got %v", err)
+	}
+
+	// Verify value unchanged
+	data, _, _ := mgr.GetCounter("counter1", "cust1")
+	if data.Value != 0 {
+		t.Errorf("counter value should be unchanged after failed SetCounter: got %d", data.Value)
+	}
+}
+
+func TestSetCounterEnforcesGlobalLimit(t *testing.T) {
+	mgr := store.NewManagerWithLimit(280)
+
+	_, err := mgr.CreateCounter("counter1", "shard1", "cust1", 0, nil, nil, time.Now().Add(time.Hour), 1)
+	if err != nil {
+		t.Fatalf("create counter failed: %v", err)
+	}
+
+	// Set to a large value that exceeds global limit
+	_, err = mgr.SetCounter("counter1", "cust1", 9223372036854775807, time.Time{})
+	if err != store.ErrCapacityExceeded {
+		t.Errorf("expected ErrCapacityExceeded when SetCounter grows JSON beyond limit, got %v", err)
+	}
+}
