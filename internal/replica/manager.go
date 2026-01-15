@@ -1216,13 +1216,23 @@ func (m *Manager) doRecovery(primaryAddr string) {
 		return
 	}
 
+	// Validate registry snapshot before applying any changes to avoid partial state
+	if m.registry != nil {
+		if err := registry.ValidateSnapshot(registrySnapshot.Entries); err != nil {
+			log.Printf("recovery: invalid registry snapshot: %v", err)
+			m.recoveryFailed()
+			return
+		}
+	}
+
 	// Reset local state (under lock to ensure atomicity with epoch check)
 	m.store.Reset(storeSnapshot.Stores)
 	log.Printf("recovery: reset store with %d stores", len(storeSnapshot.Stores))
 
 	if m.registry != nil {
+		// This should not fail since we validated above, but handle defensively
 		if err := m.registry.Reset(registrySnapshot.Entries); err != nil {
-			log.Printf("recovery: failed to reset registry: %v", err)
+			log.Printf("recovery: failed to reset registry (unexpected after validation): %v", err)
 			return
 		}
 		log.Printf("recovery: reset registry with %d entries", len(registrySnapshot.Entries))

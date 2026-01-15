@@ -60,6 +60,7 @@ var errorMap = map[error]httpError{
 	registry.ErrUnauthorized:        {ErrCodeUnauthorized, "unauthorized", http.StatusForbidden},
 	registry.ErrInvalidState:        {"", "invalid state for operation", http.StatusConflict},
 	registry.ErrReservationMismatch: {"", "reservation ID mismatch", http.StatusConflict},
+	registry.ErrStoreIDCollision:    {"", "store ID already registered to different name", http.StatusConflict},
 
 	replica.ErrTombstoneLimitExceeded: {ErrCodeTombstoneLimitExceeded, "tombstone limit exceeded", http.StatusTooManyRequests},
 }

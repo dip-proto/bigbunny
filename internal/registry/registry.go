@@ -368,17 +368,28 @@ func (m *Manager) ApplyReplicatedEntry(e *Entry) error {
 
 	if e.Version > existing.Version {
 		newEntry := e.Copy()
-		// Check for collision before making changes
+
+		// Check for collision if new entry needs indexing with a different storeID
 		if newEntry.StoreID != "" && newEntry.State == StateActive && newEntry.StoreID != existing.StoreID {
 			if err := m.indexByStoreID(newEntry); err != nil {
 				return err
 			}
 		}
-		if existing.StoreID != "" && existing.StoreID != newEntry.StoreID {
-			delete(m.byStoreID, existing.StoreID)
+
+		// Remove old storeID from index if:
+		// - storeID changed, OR
+		// - same storeID but state transitioned away from active
+		if existing.StoreID != "" {
+			storeIDChanged := existing.StoreID != newEntry.StoreID
+			becameNonActive := existing.StoreID == newEntry.StoreID && newEntry.State != StateActive
+			if storeIDChanged || becameNonActive {
+				delete(m.byStoreID, existing.StoreID)
+			}
 		}
+
 		m.entries[key] = newEntry
-		// Handle case where storeID didn't change but state became active
+
+		// Add to index if active with same storeID (and wasn't already added above)
 		if newEntry.StoreID != "" && newEntry.State == StateActive && newEntry.StoreID == existing.StoreID {
 			m.byStoreID[newEntry.StoreID] = newEntry
 		}
@@ -468,9 +479,31 @@ func (m *Manager) Snapshot() []*Entry {
 	return entries
 }
 
+// ValidateSnapshot checks if a snapshot can be applied without storeID collisions.
+// Call this before Reset to fail early without making changes.
+func ValidateSnapshot(entries []*Entry) error {
+	seen := make(map[string]*Entry)
+	for _, e := range entries {
+		if e.StoreID != "" && e.State == StateActive {
+			if existing, exists := seen[e.StoreID]; exists && existing.Key() != e.Key() {
+				log.Printf("registry: storeID collision in snapshot: %s claimed by both %s and %s",
+					e.StoreID, existing.Key(), e.Key())
+				return ErrStoreIDCollision
+			}
+			seen[e.StoreID] = e
+		}
+	}
+	return nil
+}
+
 // Reset replaces all registry entries with the provided snapshot.
 // Returns ErrStoreIDCollision if the snapshot contains duplicate storeIDs.
+// Consider calling ValidateSnapshot first if you need to fail before other operations.
 func (m *Manager) Reset(entries []*Entry) error {
+	if err := ValidateSnapshot(entries); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -480,11 +513,6 @@ func (m *Manager) Reset(entries []*Entry) error {
 	for _, e := range entries {
 		newEntries[e.Key()] = e
 		if e.StoreID != "" && e.State == StateActive {
-			if existing, exists := newByStoreID[e.StoreID]; exists && existing.Key() != e.Key() {
-				log.Printf("registry: storeID collision in snapshot: %s claimed by both %s and %s",
-					e.StoreID, existing.Key(), e.Key())
-				return ErrStoreIDCollision
-			}
 			newByStoreID[e.StoreID] = e
 		}
 	}
