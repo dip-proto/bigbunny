@@ -142,7 +142,7 @@ If you see repeated replication failures (the `replication_fail_count` metric), 
 
 ## Capacity Planning
 
-Big Bunny keeps everything in RAM, so capacity planning is mostly about memory. Each store needs roughly 4KB total—2KB for the body (the maximum size) and about 2KB for metadata. If you configure a 4GB memory limit, you can store about one million stores per node.
+Big Bunny keeps everything in RAM, so capacity planning is mostly about memory. Each store needs roughly 2.5KB total—2KB for the body (the maximum size) plus 256 bytes for metadata overhead. If you configure a 4GB memory limit, you can store about 1.6 million stores per node.
 
 Remember that stores are replicated. With replication factor 2, you're storing two copies of everything. Your million stores are spread across both nodes, so you have about 500,000 unique stores with each one replicated once.
 
@@ -328,7 +328,7 @@ The network security matters too. Put your Big Bunny nodes on a private network 
 
 Big Bunny is designed to be fast out of the box, so there isn't much tuning to do. The main knobs are memory limits and lock timeouts.
 
-Memory limits control capacity. Set them based on how many stores you need to support. Remember each store needs roughly 4KB, so divide your available memory by 4KB to get your store capacity.
+Memory limits control capacity. Set them based on how many stores you need to support. Each store needs roughly 2.5KB (2KB max body plus 256 bytes overhead), so divide your available memory by 2.5KB to get your store capacity.
 
 Lock timeouts are currently fixed at 500 milliseconds. This is a good default for most workloads. If your modify operations are slower than this (maybe you're doing complex processing), you'll see lock timeout errors. Unfortunately, there's no way to adjust this without modifying the code. If this becomes a problem, file an issue.
 

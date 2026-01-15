@@ -14,7 +14,7 @@ Start by cloning the repository and building the binary. Big Bunny is written in
 
 ```bash
 git clone https://github.com/dip-proto/bigbunny.git
-cd bbd
+cd bigbunny
 ```
 
 The simplest way to build is with Make:
@@ -339,7 +339,7 @@ Big Bunny keeps everything in RAM, which is great for performance but means you 
 
 When you hit this limit, new stores can't be created. Existing stores continue working, but create operations return a `CapacityExceeded` error. This is a hard limit—there's no spillover to disk or fancy eviction policy. You either have room for the store or you don't.
 
-For capacity planning, figure that each store needs about 4KB total (2KB for the body plus ~2KB for metadata). A 4GB limit gives you roughly one million stores per node. Remember that stores are replicated, so with RF=2, you're storing two copies of everything.
+For capacity planning, figure that each store needs about 2.5KB total (2KB max for the body plus 256 bytes for metadata overhead). A 4GB limit gives you roughly 1.6 million stores per node. Remember that stores are replicated, so with RF=2, you're storing two copies of everything.
 
 ## Resource Exhaustion Protection
 
