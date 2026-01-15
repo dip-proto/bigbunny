@@ -102,14 +102,17 @@ func NewManager() *Manager {
 	}
 }
 
-// indexByStoreID adds an entry to the storeID index, logging if a collision is detected.
+// indexByStoreID adds an entry to the storeID index.
+// Returns ErrStoreIDCollision if a different entry already claims this storeID.
 // Caller must hold m.mu.
-func (m *Manager) indexByStoreID(entry *Entry) {
+func (m *Manager) indexByStoreID(entry *Entry) error {
 	if existing, exists := m.byStoreID[entry.StoreID]; exists && existing.Key() != entry.Key() {
-		log.Printf("registry: storeID collision detected: %s claimed by both %s and %s",
+		log.Printf("registry: storeID collision rejected: %s claimed by %s, cannot assign to %s",
 			entry.StoreID, existing.Key(), entry.Key())
+		return ErrStoreIDCollision
 	}
 	m.byStoreID[entry.StoreID] = entry
+	return nil
 }
 
 // Reserve attempts to claim a name for a customer. This is the first phase of the
@@ -176,13 +179,19 @@ func (m *Manager) Commit(customerID, name, reservationID, storeID string, expire
 		return nil, ErrReservationMismatch
 	}
 
+	// Check for storeID collision before modifying entry
+	if existing, exists := m.byStoreID[storeID]; exists && existing.Key() != entry.Key() {
+		log.Printf("registry: storeID collision rejected: %s claimed by %s, cannot assign to %s",
+			storeID, existing.Key(), entry.Key())
+		return nil, ErrStoreIDCollision
+	}
+
 	entry.State = StateActive
 	entry.StoreID = storeID
 	entry.ExpiresAt = expiresAt
 	entry.LeaderEpoch = leaderEpoch
 	entry.Version++
-
-	m.indexByStoreID(entry)
+	m.byStoreID[storeID] = entry
 
 	return entry.Copy(), nil
 }
@@ -323,18 +332,22 @@ func (m *Manager) RevertToActive(customerID, name string) error {
 		return ErrInvalidState
 	}
 
+	// Check for storeID collision before modifying entry
+	if entry.StoreID != "" {
+		if err := m.indexByStoreID(entry); err != nil {
+			return err
+		}
+	}
+
 	entry.State = StateActive
 	entry.Version++
-
-	if entry.StoreID != "" {
-		m.indexByStoreID(entry)
-	}
 
 	return nil
 }
 
 // ApplyReplicatedEntry applies an entry received from replication. It uses version-based
 // conflict resolution, only applying updates with a higher version number.
+// Returns ErrStoreIDCollision if the entry's storeID conflicts with a different entry.
 func (m *Manager) ApplyReplicatedEntry(e *Entry) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -344,21 +357,30 @@ func (m *Manager) ApplyReplicatedEntry(e *Entry) error {
 
 	if !exists {
 		newEntry := e.Copy()
-		m.entries[key] = newEntry
 		if newEntry.StoreID != "" && newEntry.State == StateActive {
-			m.indexByStoreID(newEntry)
+			if err := m.indexByStoreID(newEntry); err != nil {
+				return err
+			}
 		}
+		m.entries[key] = newEntry
 		return nil
 	}
 
 	if e.Version > existing.Version {
-		if existing.StoreID != "" {
+		newEntry := e.Copy()
+		// Check for collision before making changes
+		if newEntry.StoreID != "" && newEntry.State == StateActive && newEntry.StoreID != existing.StoreID {
+			if err := m.indexByStoreID(newEntry); err != nil {
+				return err
+			}
+		}
+		if existing.StoreID != "" && existing.StoreID != newEntry.StoreID {
 			delete(m.byStoreID, existing.StoreID)
 		}
-		newEntry := e.Copy()
 		m.entries[key] = newEntry
-		if newEntry.StoreID != "" && newEntry.State == StateActive {
-			m.indexByStoreID(newEntry)
+		// Handle case where storeID didn't change but state became active
+		if newEntry.StoreID != "" && newEntry.State == StateActive && newEntry.StoreID == existing.StoreID {
+			m.byStoreID[newEntry.StoreID] = newEntry
 		}
 	}
 	return nil
@@ -447,16 +469,27 @@ func (m *Manager) Snapshot() []*Entry {
 }
 
 // Reset replaces all registry entries with the provided snapshot.
-func (m *Manager) Reset(entries []*Entry) {
+// Returns ErrStoreIDCollision if the snapshot contains duplicate storeIDs.
+func (m *Manager) Reset(entries []*Entry) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.entries = make(map[string]*Entry)
-	m.byStoreID = make(map[string]*Entry)
+	newEntries := make(map[string]*Entry)
+	newByStoreID := make(map[string]*Entry)
+
 	for _, e := range entries {
-		m.entries[e.Key()] = e
+		newEntries[e.Key()] = e
 		if e.StoreID != "" && e.State == StateActive {
-			m.indexByStoreID(e)
+			if existing, exists := newByStoreID[e.StoreID]; exists && existing.Key() != e.Key() {
+				log.Printf("registry: storeID collision in snapshot: %s claimed by both %s and %s",
+					e.StoreID, existing.Key(), e.Key())
+				return ErrStoreIDCollision
+			}
+			newByStoreID[e.StoreID] = e
 		}
 	}
+
+	m.entries = newEntries
+	m.byStoreID = newByStoreID
+	return nil
 }

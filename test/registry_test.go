@@ -390,7 +390,9 @@ func TestRegistryReset(t *testing.T) {
 		{CustomerID: "cust2", Name: "new-store2", StoreID: "new-id2", State: registry.StateActive, Version: 1},
 		{CustomerID: "cust3", Name: "new-store1", StoreID: "new-id3", State: registry.StateActive, Version: 1},
 	}
-	mgr.Reset(newEntries)
+	if err := mgr.Reset(newEntries); err != nil {
+		t.Fatalf("Reset failed: %v", err)
+	}
 
 	// Old entries should be gone
 	_, err := mgr.Lookup("cust1", "old-store1")
@@ -428,7 +430,9 @@ func TestRegistryResetEmptiesAll(t *testing.T) {
 	}
 
 	// Reset with empty list
-	mgr.Reset([]*registry.Entry{})
+	if err := mgr.Reset([]*registry.Entry{}); err != nil {
+		t.Fatalf("Reset with empty list failed: %v", err)
+	}
 
 	if mgr.Count() != 0 {
 		t.Errorf("expected 0 entries after reset with empty list, got %d", mgr.Count())

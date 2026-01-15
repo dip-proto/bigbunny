@@ -1221,7 +1221,10 @@ func (m *Manager) doRecovery(primaryAddr string) {
 	log.Printf("recovery: reset store with %d stores", len(storeSnapshot.Stores))
 
 	if m.registry != nil {
-		m.registry.Reset(registrySnapshot.Entries)
+		if err := m.registry.Reset(registrySnapshot.Entries); err != nil {
+			log.Printf("recovery: failed to reset registry: %v", err)
+			return
+		}
 		log.Printf("recovery: reset registry with %d entries", len(registrySnapshot.Entries))
 	}
 

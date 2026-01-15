@@ -22,3 +22,6 @@ var ErrInvalidState = errors.New("invalid entry state for operation")
 
 // ErrReservationMismatch is returned when the provided reservation ID doesn't match the entry's.
 var ErrReservationMismatch = errors.New("reservation ID mismatch")
+
+// ErrStoreIDCollision is returned when two different entries claim the same store ID.
+var ErrStoreIDCollision = errors.New("store ID already registered to different entry")
