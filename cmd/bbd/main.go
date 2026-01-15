@@ -241,13 +241,14 @@ func main() {
 	}
 
 	apiCfg := &api.Config{
-		Site:          *site,
-		HostID:        *hostID,
-		DefaultTTL:    14 * 24 * time.Hour,
-		MaxBodySize:   2 * 1024,
-		ModifyTimeout: 500 * time.Millisecond,
-		Cipher:        cipher,
-		InternalToken: *internalToken,
+		Site:                *site,
+		HostID:              *hostID,
+		DefaultTTL:          14 * 24 * time.Hour,
+		MaxBodySize:         2 * 1024,
+		MaxInternalBodySize: 4 * 1024,
+		ModifyTimeout:       500 * time.Millisecond,
+		Cipher:              cipher,
+		InternalToken:       *internalToken,
 	}
 	apiServer := api.NewServer(apiCfg, storeMgr, replicaMgr, hasher, rateLimiter)
 

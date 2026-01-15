@@ -30,13 +30,14 @@ type Server struct {
 
 // Config holds the server configuration including site identity, TTL defaults, size limits, and cryptographic settings.
 type Config struct {
-	Site          string
-	HostID        string
-	DefaultTTL    time.Duration
-	MaxBodySize   int64
-	ModifyTimeout time.Duration
-	Cipher        auth.StoreIDCipher
-	InternalToken string // Shared secret for internal endpoints (forwarding)
+	Site                string
+	HostID              string
+	DefaultTTL          time.Duration
+	MaxBodySize         int64
+	MaxInternalBodySize int64 // Limit for internal endpoints (replication); accounts for base64+JSON overhead
+	ModifyTimeout       time.Duration
+	Cipher              auth.StoreIDCipher
+	InternalToken       string // Shared secret for internal endpoints (forwarding)
 }
 
 // CreateRequest is the JSON body for creating stores. If the body is not valid JSON or lacks a type field, it is treated as raw blob data for backwards compatibility.
@@ -70,6 +71,7 @@ func DefaultConfig() *Config {
 		DefaultTTL:    14 * 24 * time.Hour, // 2 weeks
 		MaxBodySize:   2 * 1024,            // 2 KiB
 		ModifyTimeout: 500 * time.Millisecond,
+		// MaxInternalBodySize defaults to 2x MaxBodySize if not set
 	}
 }
 
@@ -1100,8 +1102,13 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleReplicate(w http.ResponseWriter, r *http.Request) {
+	body, ok := s.readLimitedInternalBody(w, r)
+	if !ok {
+		return
+	}
+
 	var msg replica.ReplicationMessage
-	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+	if err := json.Unmarshal(body, &msg); err != nil {
 		http.Error(w, "invalid message", http.StatusBadRequest)
 		return
 	}
@@ -1138,8 +1145,13 @@ func (s *Server) handleReplicate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
+	body, ok := s.readLimitedInternalBody(w, r)
+	if !ok {
+		return
+	}
+
 	var hb replica.HeartbeatMessage
-	if err := json.NewDecoder(r.Body).Decode(&hb); err != nil {
+	if err := json.Unmarshal(body, &hb); err != nil {
 		http.Error(w, "invalid heartbeat", http.StatusBadRequest)
 		return
 	}
@@ -1312,6 +1324,24 @@ func (s *Server) readLimitedBody(w http.ResponseWriter, r *http.Request) ([]byte
 	return body, true
 }
 
+func (s *Server) readLimitedInternalBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	limit := s.config.MaxInternalBodySize
+	if limit == 0 {
+		// Derive from MaxBodySize: 2x accounts for base64 (~1.33x) + JSON overhead
+		limit = s.config.MaxBodySize * 2
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return nil, false
+	}
+	if int64(len(body)) > limit {
+		http.Error(w, "body too large", http.StatusRequestEntityTooLarge)
+		return nil, false
+	}
+	return body, true
+}
+
 func (s *Server) parseTTLHeader(r *http.Request) time.Duration {
 	if ttlHeader := r.Header.Get("BigBunny-Not-Valid-After"); ttlHeader != "" {
 		if secs, err := strconv.ParseInt(ttlHeader, 10, 64); err == nil {
@@ -1369,8 +1399,13 @@ func (s *Server) writeLockStateUnknown(w http.ResponseWriter, retryAfter time.Du
 }
 
 func (s *Server) handleReplicateRegistry(w http.ResponseWriter, r *http.Request) {
+	body, ok := s.readLimitedInternalBody(w, r)
+	if !ok {
+		return
+	}
+
 	var msg replica.RegistryReplicationMessage
-	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+	if err := json.Unmarshal(body, &msg); err != nil {
 		http.Error(w, "invalid message", http.StatusBadRequest)
 		return
 	}
@@ -1404,8 +1439,13 @@ type RegistryReserveResponse struct {
 }
 
 func (s *Server) handleRegistryReserve(w http.ResponseWriter, r *http.Request) {
+	body, ok := s.readLimitedBody(w, r)
+	if !ok {
+		return
+	}
+
 	var req RegistryReserveRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
@@ -1458,8 +1498,13 @@ type RegistryCommitResponse struct {
 }
 
 func (s *Server) handleRegistryCommit(w http.ResponseWriter, r *http.Request) {
+	body, ok := s.readLimitedBody(w, r)
+	if !ok {
+		return
+	}
+
 	var req RegistryCommitRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
@@ -1517,8 +1562,13 @@ type RegistryAbortRequest struct {
 }
 
 func (s *Server) handleRegistryAbort(w http.ResponseWriter, r *http.Request) {
+	body, ok := s.readLimitedBody(w, r)
+	if !ok {
+		return
+	}
+
 	var req RegistryAbortRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
@@ -1612,8 +1662,13 @@ type RegistryDeleteRequest struct {
 }
 
 func (s *Server) handleRegistryDelete(w http.ResponseWriter, r *http.Request) {
+	body, ok := s.readLimitedBody(w, r)
+	if !ok {
+		return
+	}
+
 	var req RegistryDeleteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}

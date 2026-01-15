@@ -331,12 +331,13 @@ func NewCluster(cfg *ClusterConfig) (*Cluster, error) {
 		cipher := auth.NewCipher(auth.DevKeySet())
 
 		apiCfg := &api.Config{
-			Site:          "test",
-			HostID:        nodeID,
-			DefaultTTL:    14 * 24 * time.Hour,
-			MaxBodySize:   2 * 1024,
-			ModifyTimeout: cfg.ModifyTimeout,
-			Cipher:        cipher,
+			Site:                "test",
+			HostID:              nodeID,
+			DefaultTTL:          14 * 24 * time.Hour,
+			MaxBodySize:         2 * 1024,
+			MaxInternalBodySize: 4 * 1024,
+			ModifyTimeout:       cfg.ModifyTimeout,
+			Cipher:              cipher,
 		}
 		apiServer := api.NewServer(apiCfg, storeMgr, replicaMgr, hasher, nil)
 
