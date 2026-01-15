@@ -229,7 +229,7 @@ Big Bunny includes comprehensive protection against resource exhaustion attacks.
 --http-max-header-bytes=1048576   # Max header size (1 MB)
 ```
 
-These protections are all disabled by default (set to 0) for backward compatibility. Enable them in production for defense in depth.
+Per-customer memory quotas and tombstone limits are disabled by default (set to 0) for backward compatibility. HTTP timeouts are enabled by default with the values shown above. Enable quotas and limits in production for defense in depth.
 
 ## Future Security Improvements
 
