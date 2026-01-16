@@ -3,6 +3,7 @@ package replica
 import (
 	"time"
 
+	"github.com/dip-proto/bigbunny/internal/registry"
 	"github.com/dip-proto/bigbunny/internal/store"
 )
 
@@ -132,4 +133,16 @@ type RegistryReplicationMessage struct {
 	Version       uint64      `json:"version"`
 	SourceHost    string      `json:"source_host"`
 	Timestamp     time.Time   `json:"timestamp"`
+}
+
+// JoinSnapshotData contains all state needed for a secondary to join.
+// This is returned by the combined /internal/join-snapshot endpoint.
+type JoinSnapshotData struct {
+	Stores      []*store.Store    `json:"stores"`
+	Tombstones  []TombstoneEntry  `json:"tombstones"`
+	Registry    []*registry.Entry `json:"registry"`
+	HasRegistry bool              `json:"has_registry"` // Explicit flag for mismatch detection
+	LeaderEpoch uint64            `json:"leader_epoch"`
+	Site        string            `json:"site"`
+	HostID      string            `json:"host_id"`
 }

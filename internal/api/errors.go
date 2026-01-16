@@ -31,6 +31,7 @@ const (
 	ErrCodeValueOutOfBounds       ErrorCode = "ValueOutOfBounds"
 	ErrCodeInvalidBounds          ErrorCode = "InvalidBounds"
 	ErrCodeTombstoneLimitExceeded ErrorCode = "TombstoneLimitExceeded"
+	ErrCodeJoinSyncing            ErrorCode = "JoinSyncing"
 )
 
 type httpError struct {

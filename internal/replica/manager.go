@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dip-proto/bigbunny/internal/registry"
@@ -107,6 +109,15 @@ type Manager struct {
 	replicationFailCount int       // consecutive failures
 	lastRecoveryAttempt  time.Time // when recovery was last attempted (for retry debounce)
 	recoveryAttempts     int       // total recovery attempts (for testing/metrics)
+
+	// joinSyncMu provides a barrier for in-flight mutations during join snapshot.
+	// Writers/GC take RLock (concurrent), join snapshot takes Lock (exclusive).
+	joinSyncMu sync.RWMutex
+
+	// joinInProgress is set true while a join is active. Used for:
+	// 1. Preventing concurrent joins (CAS)
+	// 2. Fast-fail path for new writes (503 instead of blocking)
+	joinInProgress atomic.Bool
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -228,6 +239,44 @@ func (m *Manager) RecoveryAttempts() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.recoveryAttempts
+}
+
+// TryAcquireWriteBarrier attempts to acquire the write barrier.
+// Returns (release func, true) on success, (nil, false) if join is in progress.
+// Uses TryRLock to avoid blocking when a join is waiting for Lock().
+func (m *Manager) TryAcquireWriteBarrier() (func(), bool) {
+	if m.joinSyncMu.TryRLock() {
+		return m.joinSyncMu.RUnlock, true
+	}
+	return nil, false
+}
+
+// StartJoinSync marks join as in-progress, then BLOCKS until all in-flight
+// mutations complete. Returns false only if another join is already in progress.
+func (m *Manager) StartJoinSync() bool {
+	// Prevent concurrent joins (atomic CAS)
+	if !m.joinInProgress.CompareAndSwap(false, true) {
+		return false // Another join already in progress
+	}
+
+	// BLOCK until all in-flight writes complete (waiting for RLocks to release)
+	// This is intentionally blocking - joins wait for writes, not the other way around
+	m.joinSyncMu.Lock()
+	return true
+}
+
+// EndJoinSync releases the exclusive lock and clears the in-progress flag.
+// Note: Flag must be cleared before unlock to prevent spurious rejection of
+// a new join in the window between unlock and flag clear.
+func (m *Manager) EndJoinSync() {
+	m.joinInProgress.Store(false)
+	m.joinSyncMu.Unlock()
+}
+
+// IsJoinSyncing returns true if a join is in progress.
+// Used for fast-fail 503 path in write handlers.
+func (m *Manager) IsJoinSyncing() bool {
+	return m.joinInProgress.Load()
 }
 
 // SetRole changes the role of this node and updates the epoch when becoming primary.
@@ -942,9 +991,16 @@ func (m *Manager) orphanGCLoop() {
 			return
 		case <-ticker.C:
 			if m.Role() == RolePrimary {
+				// Try to acquire barrier - skip if join in progress
+				release, ok := m.TryAcquireWriteBarrier()
+				if !ok {
+					// Join in progress, skip this tick
+					continue
+				}
 				m.cleanupOrphans()
 				m.cleanupExpiredReservations()
 				m.cleanupStuckDeletingEntries()
+				release()
 			}
 		}
 	}
@@ -1039,7 +1095,14 @@ func (m *Manager) expiryGCLoop() {
 			return
 		case <-ticker.C:
 			if m.Role() == RolePrimary {
+				// Try to acquire barrier - skip if join in progress
+				release, ok := m.TryAcquireWriteBarrier()
+				if !ok {
+					// Join in progress, skip this tick
+					continue
+				}
 				m.cleanupExpiredStores()
+				release()
 			}
 		}
 	}
@@ -1173,34 +1236,27 @@ func (m *Manager) doRecovery(primaryAddr string) {
 
 	log.Printf("recovery: starting recovery from %s", primaryAddr)
 
-	// Fetch store snapshot
-	storeSnapshot, err := m.fetchStoreSnapshot(primaryAddr)
+	// Fetch combined snapshot
+	joinSnapshot, err := m.fetchJoinSnapshot(primaryAddr)
 	if err != nil {
-		log.Printf("recovery: failed to fetch store snapshot: %v", err)
+		log.Printf("recovery: failed to fetch join snapshot: %v", err)
 		m.recoveryFailed()
 		return
 	}
 
-	// Reject snapshots from nodes in different sites (unless site verification is disabled)
-	if !m.config.DisableSiteVerification && storeSnapshot.Site != "" && storeSnapshot.Site != m.config.Site {
-		log.Printf("recovery: rejecting snapshot from %s: site mismatch (theirs=%q, ours=%q)",
-			primaryAddr, storeSnapshot.Site, m.config.Site)
+	// Validate site (matches existing pattern: !DisableSiteVerification)
+	if !m.config.DisableSiteVerification && joinSnapshot.Site != "" && joinSnapshot.Site != m.config.Site {
+		log.Printf("recovery: rejecting snapshot: site mismatch (theirs=%q, ours=%q)",
+			joinSnapshot.Site, m.config.Site)
 		m.recoveryFailed()
 		return
 	}
 
-	// Early rejection of obviously stale snapshots
+	// Early rejection of obviously stale snapshots (unlocked check)
 	currentEpoch := m.LeaderEpoch()
-	if storeSnapshot.LeaderEpoch < currentEpoch {
-		log.Printf("recovery: rejecting stale snapshot (epoch %d < %d)", storeSnapshot.LeaderEpoch, currentEpoch)
-		m.recoveryFailed()
-		return
-	}
-
-	// Fetch registry snapshot
-	registrySnapshot, err := m.fetchRegistrySnapshot(primaryAddr)
-	if err != nil {
-		log.Printf("recovery: failed to fetch registry snapshot: %v", err)
+	if joinSnapshot.LeaderEpoch < currentEpoch {
+		log.Printf("recovery: rejecting stale snapshot (epoch %d < %d)",
+			joinSnapshot.LeaderEpoch, currentEpoch)
 		m.recoveryFailed()
 		return
 	}
@@ -1210,46 +1266,56 @@ func (m *Manager) doRecovery(primaryAddr string) {
 	defer m.mu.Unlock()
 
 	// Re-check epoch under lock - abort if epoch advanced beyond snapshot during fetch
-	if storeSnapshot.LeaderEpoch < m.leaderEpoch {
+	// CRITICAL: prevents applying stale snapshot if heartbeat updated epoch mid-fetch
+	if joinSnapshot.LeaderEpoch < m.leaderEpoch {
 		log.Printf("recovery: aborting - epoch advanced during fetch (snapshot %d < current %d)",
-			storeSnapshot.LeaderEpoch, m.leaderEpoch)
+			joinSnapshot.LeaderEpoch, m.leaderEpoch)
 		return
 	}
 
-	// Validate registry snapshot before applying any changes to avoid partial state
+	// Validate registry configuration match (both directions)
+	if m.registry != nil && !joinSnapshot.HasRegistry {
+		log.Printf("recovery: aborting - secondary has registry but primary does not")
+		return
+	}
+	if m.registry == nil && joinSnapshot.HasRegistry {
+		log.Printf("recovery: aborting - primary has registry but secondary does not")
+		return
+	}
+
+	// Validate registry snapshot before applying any changes
 	if m.registry != nil {
-		if err := registry.ValidateSnapshot(registrySnapshot.Entries); err != nil {
+		if err := registry.ValidateSnapshot(joinSnapshot.Registry); err != nil {
 			log.Printf("recovery: invalid registry snapshot: %v", err)
-			m.recoveryFailed()
 			return
 		}
 	}
 
 	// Reset local state (under lock to ensure atomicity with epoch check)
-	m.store.Reset(storeSnapshot.Stores)
-	log.Printf("recovery: reset store with %d stores", len(storeSnapshot.Stores))
+	m.store.Reset(joinSnapshot.Stores)
+	log.Printf("recovery: reset store with %d stores", len(joinSnapshot.Stores))
 
 	if m.registry != nil {
-		// This should not fail since we validated above, but handle defensively
-		if err := m.registry.Reset(registrySnapshot.Entries); err != nil {
-			log.Printf("recovery: failed to reset registry (unexpected after validation): %v", err)
+		if err := m.registry.Reset(joinSnapshot.Registry); err != nil {
+			log.Printf("recovery: failed to reset registry: %v", err)
 			return
 		}
-		log.Printf("recovery: reset registry with %d entries", len(registrySnapshot.Entries))
+		log.Printf("recovery: reset registry with %d entries", len(joinSnapshot.Registry))
 	}
 
 	// Apply tombstones: delete stores that were deleted on primary
-	m.resetTombstonesLocked(storeSnapshot.Tombstones)
-	for _, ts := range storeSnapshot.Tombstones {
+	m.resetTombstonesLocked(joinSnapshot.Tombstones)
+	for _, ts := range joinSnapshot.Tombstones {
 		_ = m.store.ForceDelete(ts.StoreID)
 	}
-	log.Printf("recovery: applied %d tombstones", len(storeSnapshot.Tombstones))
+	log.Printf("recovery: applied %d tombstones", len(joinSnapshot.Tombstones))
 
-	// Update epoch (only if >= current) and transition to secondary
-	if storeSnapshot.LeaderEpoch >= m.leaderEpoch {
-		m.leaderEpoch = storeSnapshot.LeaderEpoch
+	// Update epoch and transition to secondary
+	// CRITICAL: Update lastLeaderSeen to prevent immediate promotion
+	if joinSnapshot.LeaderEpoch >= m.leaderEpoch {
+		m.leaderEpoch = joinSnapshot.LeaderEpoch
 	}
-	m.lastLeaderSeen = m.now()
+	m.lastLeaderSeen = m.now() // Prevents immediate promotion!
 	m.role = RoleSecondary
 
 	log.Printf("recovery: complete, now SECONDARY at epoch %d", m.leaderEpoch)
@@ -1261,62 +1327,33 @@ func (m *Manager) recoveryFailed() {
 	log.Printf("recovery: failed, staying in JOINING state")
 }
 
-// fetchStoreSnapshot fetches the store snapshot from the primary.
-func (m *Manager) fetchStoreSnapshot(primaryAddr string) (*SnapshotData, error) {
-	url := fmt.Sprintf("http://%s/internal/snapshot", primaryAddr)
+// fetchJoinSnapshot fetches the combined join snapshot from the primary.
+func (m *Manager) fetchJoinSnapshot(primaryAddr string) (*JoinSnapshotData, error) {
+	url := fmt.Sprintf("http://%s/internal/join-snapshot", primaryAddr)
 	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	m.setInternalAuth(req)
+	req.Header.Set("X-Internal-Token", m.config.InternalToken)
 
 	resp, err := m.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("send request: %w", err)
+		return nil, fmt.Errorf("fetch: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		// Another join in progress, will retry on next heartbeat
+		return nil, fmt.Errorf("join in progress on primary")
+	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var snapshot SnapshotData
+	var snapshot JoinSnapshotData
 	if err := json.NewDecoder(resp.Body).Decode(&snapshot); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
+		return nil, fmt.Errorf("decode: %w", err)
 	}
-
-	return &snapshot, nil
-}
-
-// RegistrySnapshotResponse holds the registry entries and epoch returned when fetching a snapshot from the primary during recovery.
-type RegistrySnapshotResponse struct {
-	Entries     []*registry.Entry `json:"entries"`
-	LeaderEpoch uint64            `json:"leader_epoch"`
-}
-
-// fetchRegistrySnapshot fetches the registry snapshot from the primary.
-func (m *Manager) fetchRegistrySnapshot(primaryAddr string) (*RegistrySnapshotResponse, error) {
-	url := fmt.Sprintf("http://%s/internal/registry/snapshot", primaryAddr)
-	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	m.setInternalAuth(req)
-
-	resp, err := m.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("send request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
-	}
-
-	var snapshot RegistrySnapshotResponse
-	if err := json.NewDecoder(resp.Body).Decode(&snapshot); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-
 	return &snapshot, nil
 }

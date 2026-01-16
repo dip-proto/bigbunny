@@ -124,8 +124,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /internal/replicate", s.handleReplicate)
 	mux.HandleFunc("POST /internal/replicate-registry", s.handleReplicateRegistry)
 	mux.HandleFunc("POST /internal/heartbeat", s.handleHeartbeat)
-	mux.HandleFunc("POST /internal/snapshot", s.handleInternalSnapshot)
-	mux.HandleFunc("POST /internal/registry/snapshot", s.handleRegistrySnapshot)
+	mux.HandleFunc("POST /internal/join-snapshot", s.handleJoinSnapshot)
 
 	// Internal registry API (for named store operations)
 	mux.HandleFunc("POST /internal/registry/reserve", s.handleRegistryReserve)
@@ -277,6 +276,14 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Acquire barrier just before mutation
+	release, ok := s.replica.TryAcquireWriteBarrier()
+	if !ok {
+		s.writeJoinSyncingError(w)
+		return
+	}
+	defer release()
+
 	if isCounter {
 		// Create counter store
 		_, err := s.store.CreateCounter(storeID, shardID, customerID, *req.Value, req.Min, req.Max, expiresAt, s.replica.LeaderEpoch())
@@ -389,6 +396,39 @@ func (s *Server) handleCreateByName(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Read and validate body BEFORE acquiring barrier (slow client shouldn't block joins)
+	body, err := io.ReadAll(io.LimitReader(r.Body, s.config.MaxBodySize+1))
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+	if int64(len(body)) > s.config.MaxBodySize {
+		http.Error(w, "body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	ttl := s.parseTTLHeader(r)
+
+	shardID, err := routing.GenerateShardID()
+	if err != nil {
+		http.Error(w, "failed to generate shard ID", http.StatusInternalServerError)
+		return
+	}
+
+	storeID, err := routing.GenerateEncryptedStoreID(s.cipher, s.config.Site, shardID, customerID)
+	if err != nil {
+		http.Error(w, "failed to generate store ID", http.StatusInternalServerError)
+		return
+	}
+
+	// Acquire barrier just before first mutation (Reserve)
+	release, ok := s.replica.TryAcquireWriteBarrier()
+	if !ok {
+		s.writeJoinSyncingError(w)
+		return
+	}
+	defer release()
+
 	entry, err := reg.Reserve(customerID, name, s.replica.LeaderEpoch())
 	if err != nil {
 		writeHTTPError(w, err, err.Error())
@@ -403,34 +443,6 @@ func (s *Server) handleCreateByName(w http.ResponseWriter, r *http.Request) {
 		ReservationID: entry.ReservationID,
 		Version:       entry.Version,
 	})
-
-	body, err := io.ReadAll(io.LimitReader(r.Body, s.config.MaxBodySize+1))
-	if err != nil {
-		s.abortRegistryReservation(entry)
-		http.Error(w, "failed to read body", http.StatusBadRequest)
-		return
-	}
-	if int64(len(body)) > s.config.MaxBodySize {
-		s.abortRegistryReservation(entry)
-		http.Error(w, "body too large", http.StatusRequestEntityTooLarge)
-		return
-	}
-
-	ttl := s.parseTTLHeader(r)
-
-	shardID, err := routing.GenerateShardID()
-	if err != nil {
-		s.abortRegistryReservation(entry)
-		http.Error(w, "failed to generate shard ID", http.StatusInternalServerError)
-		return
-	}
-
-	storeID, err := routing.GenerateEncryptedStoreID(s.cipher, s.config.Site, shardID, customerID)
-	if err != nil {
-		s.abortRegistryReservation(entry)
-		http.Error(w, "failed to generate store ID", http.StatusInternalServerError)
-		return
-	}
 
 	// Detect if this is a counter or blob based on content type and body
 	var st *store.Store
@@ -580,6 +592,14 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Acquire barrier just before mutation
+	release, ok := s.replica.TryAcquireWriteBarrier()
+	if !ok {
+		s.writeJoinSyncingError(w)
+		return
+	}
+	defer release()
+
 	// Check tombstone limit BEFORE deleting the store
 	if err := s.replica.AddTombstone(storeID, customerID); err != nil {
 		writeHTTPError(w, err, "")
@@ -634,6 +654,14 @@ func (s *Server) handleDeleteByName(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name reservation in progress", http.StatusConflict)
 		return
 	}
+
+	// Acquire barrier before first mutation (MarkDeleting)
+	release, ok := s.replica.TryAcquireWriteBarrier()
+	if !ok {
+		s.writeJoinSyncingError(w)
+		return
+	}
+	defer release()
 
 	deleting, err := reg.MarkDeleting(customerID, name, s.replica.LeaderEpoch())
 	if err != nil {
@@ -753,14 +781,20 @@ func (s *Server) handleLookupIDByName(w http.ResponseWriter, r *http.Request) {
 		// Lazy cleanup: check if the referenced store still exists and is not expired
 		st, err := s.store.Get(entry.StoreID, customerID)
 		if err == store.ErrStoreNotFound || err == store.ErrStoreExpired {
-			// Store is gone or expired - clean up the registry entry
-			if delErr := reg.Delete(customerID, name); delErr == nil {
-				s.replica.QueueRegistryReplication(&replica.RegistryReplicationMessage{
-					Type:       replica.MsgRegistryDelete,
-					CustomerID: customerID,
-					Name:       name,
-				})
+			// Store is gone or expired - try to clean up the registry entry
+			// Use TryAcquireWriteBarrier so we skip cleanup during join (but still return 404)
+			release, ok := s.replica.TryAcquireWriteBarrier()
+			if ok {
+				if delErr := reg.Delete(customerID, name); delErr == nil {
+					s.replica.QueueRegistryReplication(&replica.RegistryReplicationMessage{
+						Type:       replica.MsgRegistryDelete,
+						CustomerID: customerID,
+						Name:       name,
+					})
+				}
+				release()
 			}
+			// Return 404 regardless of cleanup success
 			writeErrorWithCode(w, ErrCodeNotFound, "name not found", http.StatusNotFound)
 			return
 		}
@@ -867,6 +901,14 @@ func (s *Server) handleBeginModify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Acquire barrier just before mutation
+	release, ok := s.replica.TryAcquireWriteBarrier()
+	if !ok {
+		s.writeJoinSyncingError(w)
+		return
+	}
+	defer release()
+
 	st, err := s.store.AcquireLock(storeID, customerID, lockID, s.config.ModifyTimeout)
 	if err != nil {
 		writeHTTPError(w, err, "failed to acquire lock")
@@ -929,6 +971,14 @@ func (s *Server) handleCompleteModify(w http.ResponseWriter, r *http.Request) {
 
 	newExpiresAt := s.parseExpiresAtHeader(r, now)
 
+	// Acquire barrier just before mutation
+	release, ok := s.replica.TryAcquireWriteBarrier()
+	if !ok {
+		s.writeJoinSyncingError(w)
+		return
+	}
+	defer release()
+
 	updated, err := s.store.CompleteLock(storeID, customerID, lockID, body, newExpiresAt)
 	if err != nil {
 		writeHTTPError(w, err, "failed to complete modify")
@@ -976,6 +1026,14 @@ func (s *Server) handleCancelModify(w http.ResponseWriter, r *http.Request) {
 		s.writeLockStateUnknown(w, retryAfter)
 		return
 	}
+
+	// Acquire barrier just before mutation
+	release, ok := s.replica.TryAcquireWriteBarrier()
+	if !ok {
+		s.writeJoinSyncingError(w)
+		return
+	}
+	defer release()
 
 	if err := s.store.ReleaseLock(storeID, customerID, lockID); err != nil {
 		writeHTTPError(w, err, "failed to cancel modify")
@@ -1027,6 +1085,14 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		writeHTTPError(w, getErr, "failed to get store")
 		return
 	}
+
+	// Acquire barrier just before mutation
+	release, ok := s.replica.TryAcquireWriteBarrier()
+	if !ok {
+		s.writeJoinSyncingError(w)
+		return
+	}
+	defer release()
 
 	if st.DataType == store.DataTypeCounter {
 		// For counters, expect JSON with {"value": N}
@@ -1182,6 +1248,13 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 // handlePromote forces this node to become primary.
 func (s *Server) handlePromote(w http.ResponseWriter, r *http.Request) {
+	release, ok := s.replica.TryAcquireWriteBarrier()
+	if !ok {
+		s.writeJoinSyncingError(w)
+		return
+	}
+	defer release()
+
 	s.replica.ForcePromote()
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write([]byte("promoted")); err != nil {
@@ -1212,61 +1285,50 @@ func (s *Server) handleForceReleaseLock(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// handleInternalSnapshot returns a snapshot of stores and tombstones for recovery.
-// Only primary can serve snapshots.
-func (s *Server) handleInternalSnapshot(w http.ResponseWriter, r *http.Request) {
+// handleJoinSnapshot returns a combined snapshot for secondary join.
+// Blocks writes during snapshot creation and transfer to ensure consistency.
+func (s *Server) handleJoinSnapshot(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePrimary(w, r) {
 		return
 	}
 
+	// Acquire exclusive join-sync - only one join at a time
+	if !s.replica.StartJoinSync() {
+		w.Header().Set("Retry-After", "2")
+		http.Error(w, "join already in progress", http.StatusServiceUnavailable)
+		return
+	}
+	defer s.replica.EndJoinSync()
+
+	// Create atomic snapshot of all state
+	// Note: Individual Snapshot() calls are thread-safe. New writes get 503
+	// (TryRLock fails), and in-flight writes completed before Lock() acquired.
 	stores := s.store.Snapshot()
 	tombstones := s.replica.TombstonesSnapshot()
 
-	resp := replica.SnapshotData{
-		HostID:      s.config.HostID,
-		Site:        s.config.Site,
+	// Registry snapshot - include flag so secondary can detect mismatch
+	var registryEntries []*registry.Entry
+	hasRegistry := false
+	if reg := s.replica.Registry(); reg != nil {
+		hasRegistry = true
+		registryEntries = reg.Snapshot()
+	}
+
+	resp := replica.JoinSnapshotData{
 		Stores:      stores,
 		Tombstones:  tombstones,
+		Registry:    registryEntries,
+		HasRegistry: hasRegistry, // Explicit flag for mismatch detection
 		LeaderEpoch: s.replica.LeaderEpoch(),
-		Complete:    true,
+		Site:        s.config.Site,
+		HostID:      s.config.HostID,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("error encoding JSON response: %v", err)
+		log.Printf("error encoding join snapshot: %v", err)
 	}
-}
-
-// RegistrySnapshotResponse is returned by the registry snapshot endpoint and contains all registry entries along with the current leader epoch for consistency checking during recovery.
-type RegistrySnapshotResponse struct {
-	Entries     []*registry.Entry `json:"entries"`
-	LeaderEpoch uint64            `json:"leader_epoch"`
-}
-
-// handleRegistrySnapshot returns a snapshot of registry entries for recovery.
-// Only primary can serve snapshots.
-func (s *Server) handleRegistrySnapshot(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePrimary(w, r) {
-		return
-	}
-
-	reg := s.replica.Registry()
-	if reg == nil {
-		http.Error(w, "registry not initialized", http.StatusInternalServerError)
-		return
-	}
-
-	entries := reg.Snapshot()
-
-	resp := RegistrySnapshotResponse{
-		Entries:     entries,
-		LeaderEpoch: s.replica.LeaderEpoch(),
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("error encoding JSON response: %v", err)
-	}
+	// defer EndJoinSync() runs here
 }
 
 func (s *Server) extractCustomerID(r *http.Request) string {
@@ -1398,6 +1460,11 @@ func (s *Server) writeLockStateUnknown(w http.ResponseWriter, retryAfter time.Du
 	http.Error(w, "lock state unknown", http.StatusConflict)
 }
 
+func (s *Server) writeJoinSyncingError(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", "1")
+	writeErrorWithCode(w, ErrCodeJoinSyncing, "primary syncing to secondary", http.StatusServiceUnavailable)
+}
+
 func (s *Server) handleReplicateRegistry(w http.ResponseWriter, r *http.Request) {
 	body, ok := s.readLimitedInternalBody(w, r)
 	if !ok {
@@ -1455,6 +1522,14 @@ func (s *Server) handleRegistryReserve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "registry not initialized", http.StatusInternalServerError)
 		return
 	}
+
+	// Acquire barrier just before mutation
+	release, ok := s.replica.TryAcquireWriteBarrier()
+	if !ok {
+		s.writeJoinSyncingError(w)
+		return
+	}
+	defer release()
 
 	entry, err := reg.Reserve(req.CustomerID, req.Name, s.replica.LeaderEpoch())
 	if err != nil {
@@ -1514,6 +1589,14 @@ func (s *Server) handleRegistryCommit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "registry not initialized", http.StatusInternalServerError)
 		return
 	}
+
+	// Acquire barrier just before mutation
+	release, ok := s.replica.TryAcquireWriteBarrier()
+	if !ok {
+		s.writeJoinSyncingError(w)
+		return
+	}
+	defer release()
 
 	entry, err := reg.Commit(req.CustomerID, req.Name, req.ReservationID, req.StoreID, req.ExpiresAt, s.replica.LeaderEpoch())
 	if err != nil {
@@ -1578,6 +1661,14 @@ func (s *Server) handleRegistryAbort(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "registry not initialized", http.StatusInternalServerError)
 		return
 	}
+
+	// Acquire barrier just before mutation
+	release, ok := s.replica.TryAcquireWriteBarrier()
+	if !ok {
+		s.writeJoinSyncingError(w)
+		return
+	}
+	defer release()
 
 	if err := reg.Abort(req.CustomerID, req.Name, req.ReservationID); err != nil {
 		switch err {
@@ -1679,6 +1770,14 @@ func (s *Server) handleRegistryDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Acquire barrier just before mutation
+	release, ok := s.replica.TryAcquireWriteBarrier()
+	if !ok {
+		s.writeJoinSyncingError(w)
+		return
+	}
+	defer release()
+
 	if err := reg.Delete(req.CustomerID, req.Name); err != nil {
 		switch err {
 		case registry.ErrUnauthorized:
@@ -1738,6 +1837,14 @@ func (s *Server) handleCounterDelta(w http.ResponseWriter, r *http.Request, nega
 	if negate {
 		delta = -delta
 	}
+
+	// Acquire barrier just before mutation
+	release, ok := s.replica.TryAcquireWriteBarrier()
+	if !ok {
+		s.writeJoinSyncingError(w)
+		return
+	}
+	defer release()
 
 	result, err := s.store.Increment(storeID, customerID, delta, s.replica.LeaderEpoch(), newExpiresAt)
 	if err != nil {
