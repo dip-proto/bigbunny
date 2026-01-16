@@ -524,6 +524,7 @@ Every error response includes a `BigBunny-Error-Code` header with a machine-read
 | `StoreExpired`            | 410  | No        | Store TTL expired                     |
 | `LeaderChanged`           | 503  | Yes       | Forwarding to primary failed          |
 | `StoreUnavailable`        | 503  | Yes       | Node recovering                       |
+| `JoinSyncing`             | 503  | Yes       | Secondary join in progress            |
 | `LockStateUnknown`        | 409  | Yes       | Lock state unclear after failover     |
 | `NameCreating`            | 503  | Yes       | Name reservation in progress          |
 | `CapacityExceeded`        | 507  | No        | Memory limit reached                  |

@@ -307,6 +307,24 @@ As a last resort, you can force promotion:
 
 This immediately promotes the node, bypassing the lease checks. Use this only in emergencies when you're sure the old primary is really dead.
 
+### JoinSyncing Errors
+
+If write operations are returning `503 Service Unavailable` with error code `JoinSyncing`, a secondary node is currently joining the cluster and downloading its initial snapshot from the primary. During this brief window (typically under a second), the primary blocks all writes to ensure the snapshot is consistent.
+
+This is normal and expected during:
+- Node restarts (the restarted node recovers by downloading a snapshot)
+- Initial cluster formation (when the secondary first connects)
+- Recovery after network partitions
+
+Clients should implement retry logic with exponential backoff when they see `JoinSyncing` errors. The `Retry-After` header suggests how long to wait (typically 1-2 seconds).
+
+If you see `JoinSyncing` errors persisting for more than a few seconds, check:
+- Whether the secondary is actually recovering (check its status endpoint)
+- Network connectivity between primary and secondary
+- Whether the snapshot transfer is stuck (check logs for timeout errors)
+
+The write barrier is released as soon as the snapshot transfer completes, so prolonged `JoinSyncing` errors indicate something is wrong with the recovery process itself.
+
 ## Security Hardening
 
 The basic security model assumes you're running on a trusted network. The internal replication traffic uses a shared secret token but isn't encrypted. If you're on an untrusted network, this isn't enough.

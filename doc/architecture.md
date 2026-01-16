@@ -120,11 +120,23 @@ When a node comes back after failing or being restarted, it can't just start acc
 
 A recovering node starts in the "joining" state. In this state, it rejects client requests and doesn't participate in replication. It's essentially offline from the cluster's perspective. The first thing it does is find the primary by probing peer nodes' status endpoints.
 
-Once it knows who the primary is, it requests a snapshot. This is a consistent point-in-time copy of all stores, tombstones, and registry entries, along with the current epoch number. The primary pauses its replication queue briefly to generate this snapshot, then sends it over.
+Once it knows who the primary is, it requests a snapshot. This is a consistent point-in-time copy of all stores, tombstones, and registry entries, along with the current epoch number. The snapshot is fetched from a single endpoint that returns all state atomically, ensuring consistency between stores and registry data.
+
+### Write Barrier During Join
+
+To ensure the snapshot is consistent, the primary blocks all write operations while generating and transferring the snapshot. Any write requests that arrive during this window receive a `503 Service Unavailable` response with error code `JoinSyncing` and a `Retry-After` header. This includes creates, updates, deletes, counter mutations, and force-promote operations.
+
+The barrier uses an RWMutex pattern: normal write operations take a shared (read) lock, while the join snapshot takes an exclusive (write) lock. This means in-flight writes complete before the snapshot starts, and new writes are blocked until the snapshot transfer finishes. Clients should implement retry logic with backoff when they see `JoinSyncing` errors.
+
+This brief unavailability (typically under a second) prevents a subtle consistency problem: without the barrier, writes during snapshot transfer would generate replication messages that the joining secondary rejects (since it's still in joining state). The primary doesn't retry these messages, so they'd be lost, leaving the secondary with stale data after recovery completes.
+
+### Snapshot Validation
 
 The recovering node validates the snapshot's epoch number. If the snapshot's epoch is less than the node's current epoch, something weird has happened—maybe the wrong node got promoted. The recovery is aborted. This is epoch regression protection, and it prevents a node from rolling back to an older state.
 
-Assuming the epoch checks out, the recovering node applies the snapshot. It throws away its old data and replaces it with the snapshot data. It updates its own epoch to match the snapshot. Then it transitions from "joining" to "secondary" state and starts accepting normal replication messages again.
+The snapshot also includes a flag indicating whether the primary has a registry configured. If there's a mismatch (one node has registry, the other doesn't), recovery fails. This prevents configuration drift from causing subtle bugs.
+
+Assuming all checks pass, the recovering node applies the snapshot. It throws away its old data and replaces it with the snapshot data. It updates its own epoch to match the snapshot. Then it transitions from "joining" to "secondary" state and starts accepting normal replication messages again.
 
 If recovery fails for any reason, the node stays in "joining" state and tries again when the next heartbeat arrives. This retry logic handles transient issues like network timeouts without requiring operator intervention.
 
